@@ -95,6 +95,6 @@ If you adopt the SDK for any call, keep the existing approval gate and idempoten
 
 ## Limits worth knowing
 
-- Verified by unit tests (`tests/test_paypal.py`, 28 tests): money, validation, calibration, grounding, webhook logic, signature-call shape.
+- Verified by unit tests (`tests/test_paypal.py`, 29 tests): money, validation, calibration, grounding, webhook logic, signature-call shape.
 - **Not yet exercised against the live PayPal sandbox or Postgres in this repo's CI.** Run one real sandbox invoice end to end before recording the demo, and confirm the webhook event payload shape in your dashboard's event log (the handler accepts both documented shapes).
 - PayPal's "viewed" state is not handled; only CREATED / SENT / PAID / CANCELLED / REFUNDED are.
