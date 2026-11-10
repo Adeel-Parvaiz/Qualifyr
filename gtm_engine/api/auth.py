@@ -37,8 +37,12 @@ log = logging.getLogger(__name__)
 # them at all unless auth is disabled. FastAPI builds those in its own setup(), outside
 # these dependencies, so listing them here would have done nothing.
 # /webhooks/paypal is public because PayPal cannot send a user token; the route itself verifies
-# PayPal's signature and fails closed (see api/paypal_routes.py).
-PUBLIC_PATHS = frozenset({"/health", "/pricing/tiers", "/webhooks/paypal"})
+# PayPal's signature. The two checkout callback endpoints are public only because the buyer has
+# no Qualifyr account; each requires the unguessable capability created for that checkout.
+PUBLIC_PATHS = frozenset({
+    "/health", "/pricing/tiers", "/webhooks/paypal",
+    "/paypal/orders/return", "/paypal/orders/status",
+})
 
 _ALGORITHMS = ["ES256"]
 _jwk_client: PyJWKClient | None = None

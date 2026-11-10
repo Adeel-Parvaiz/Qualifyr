@@ -8,8 +8,8 @@ Built for the PayPal AI Hackathon 2026. **Sandbox only.** No real money moves.
 
 ```
 Discover -> Score (with reasons) -> AI drafts proposal -> YOU approve terms
-   -> PayPal invoice created (sandbox) -> payer link added to your email -> YOU approve the email
-   -> PayPal webhook confirms payment -> outcome ledger -> calibration proposes new weights -> YOU accept
+   -> PayPal invoice OR one-time Orders checkout (sandbox)
+   -> webhook confirms payment -> outcome ledger -> calibration proposes new weights -> YOU accept
 ```
 
 Two human gates, never skipped: approving the **terms** (what gets billed) and approving the **email**
@@ -19,9 +19,9 @@ Two human gates, never skipped: approving the **terms** (what gets billed) and a
 
 | Area | Path |
 |---|---|
-| PayPal client (OAuth, Invoicing v2, webhook verify) | `gtm_engine/paypal/client.py` |
-| Invoice rules, money, payload builder | `gtm_engine/paypal/invoices.py` |
-| Approval gate + invoice creation + link attach | `gtm_engine/paypal/service.py` |
+| PayPal client (OAuth, Invoicing v2, Orders v2, webhook verify) | `gtm_engine/paypal/client.py` |
+| Invoice and Orders rules, money, payload builder | `gtm_engine/paypal/invoices.py`, `gtm_engine/paypal/orders.py` |
+| Approval gate + payment creation and verification | `gtm_engine/paypal/service.py` |
 | AI proposal agent (grounded, deterministic fallback) | `gtm_engine/paypal/proposal.py` |
 | Webhook handling (idempotent, monotonic) | `gtm_engine/paypal/webhooks.py` |
 | Outcome ledger + tables | `gtm_engine/paypal/store.py` |
@@ -35,12 +35,14 @@ Two human gates, never skipped: approving the **terms** (what gets billed) and a
 ## Setup (about 10 minutes)
 
 1. **Sandbox app.** In the PayPal Developer Dashboard create a *Sandbox* REST app. Copy Client ID and Secret.
-2. **Environment variables** (see `.env.example`): `GTM_PAYPAL_CLIENT_ID`, `GTM_PAYPAL_CLIENT_SECRET`.
+2. **Environment variables** (see `.env.example`): `GTM_PAYPAL_CLIENT_ID`, `GTM_PAYPAL_CLIENT_SECRET`,
+   `GTM_PAYPAL_CHECKOUT_RETURN_URL`, and `GTM_PAYPAL_CHECKOUT_CANCEL_URL`.
    On Vercel, add them as runtime (not `NEXT_PUBLIC_`) variables and redeploy.
 3. **Webhook.** In the same app add a webhook to `https://<your-host>/api/webhooks/paypal` for
-   `INVOICING.INVOICE.CREATED`, `.SENT`, `.PAID`, `.CANCELLED`, `.REFUNDED`. Copy its **Webhook ID** into
+   invoice events and `CHECKOUT.ORDER.APPROVED`, `CHECKOUT.ORDER.COMPLETED`,
+   `PAYMENT.CAPTURE.COMPLETED`. Copy its **Webhook ID** into
    `GTM_PAYPAL_WEBHOOK_ID`. (Locally, expose port 8000 with a tunnel such as ngrok.)
-4. Tables are created automatically on first request (`proposals`, `invoices`, `payment_events`, `calibration_runs`).
+4. Tables are created automatically on first request (`proposals`, `invoices`, `paypal_orders`, `payment_events`, `calibration_runs`).
 5. **Test accounts.** Dashboard > Testing tools > Sandbox accounts. Use the *Business* account that owns the app
    as the seller and a *Personal* sandbox account to pay: open the payer link from the invoice, log in with the personal
    sandbox account and pay. The webhook then marks the invoice PAID.
@@ -52,17 +54,25 @@ Two human gates, never skipped: approving the **terms** (what gets billed) and a
 3. Approve the email (the payer link is inside it). Open the payer link and pay with the sandbox buyer.
 4. **Revenue** shows the invoice flip to Paid; **Run calibration** proposes new weights.
 
+To try the one-time checkout instead, approve the proposal and choose **One-time PayPal checkout**.
+Open the Sandbox approval link, pay with the Personal Sandbox account, and return to `/paypal/return`.
+The callback captures only after PayPal reports the matching order as approved; Qualifyr verifies
+the order and capture amounts/status server-side. A pending result is not shown as paid; the seller
+can use **Check payment status** to reconcile and capture an already-approved order, and the signed
+webhook reconciles completed captures.
+
 No resolved invoices yet? On **Revenue**, *Load synthetic demo data* adds clearly labelled fake outcomes
 (badged "synthetic", never sent to PayPal, removable with one click) so the learning loop can be shown immediately.
 
 ## Safety and correctness decisions
 
-- **Sandbox-only**: live needs both `GTM_PAYPAL_ENV=live` *and* `GTM_PAYPAL_ALLOW_LIVE=1`. Mode is shown in the header on every screen.
+- **Sandbox-only**: the API base URL is hard-wired to PayPal Sandbox; live-mode variables are ignored.
 - **Approval is bound to exact terms**: approval stores a hash of subject, body, line items and currency. Editing after approval invalidates it. Enforced in the service layer, so the API and the agent tools share it.
-- **No double invoices**: one invoice per (lead, proposal), enforced by a unique key and PayPal's `PayPal-Request-Id`.
+- **No double payment paths**: each approved proposal is atomically claimed by either Invoicing or Orders, never both.
+- **Orders checkout**: only the server-stored approved proposal sets the amount. Stable request IDs, a per-checkout HMAC capability on the return URL (derived server-side and never stored or returned to the seller API), provider-side order reconciliation, and verified captures prevent trusting browser status or amount data.
 - **PayPal never emails a prospect on its own**: invoices are sent with `send_to_recipient=false`; the link travels in your own approved email.
 - **Server-side money**: integer cents, totals recomputed on the server, amount ceiling, currency allow-list (PayPal does not settle PKR/AED/SAR, so default is USD).
-- **Webhook**: signature verified through PayPal's verify endpoint *before* anything is trusted; fails closed; each event id processed once; status transitions are monotonic (a late "sent" cannot undo "paid"); raw payloads stored for audit.
+- **Webhook**: signature verified through PayPal's verify endpoint *before* anything is trusted; fails closed; each event id processed once; Orders state changes and event deduplication are atomic; completed captures are re-read from PayPal before the ledger marks them paid.
 - **Grounded AI**: the model writes one sentence, checked against stored evidence (numbers must already appear in it). Prices are never model-invented; they come from your base price with a suggested range you confirm.
 - **Calibration is advisory**: smoothed rates, minimum sample sizes, at most 5 points of movement per weight per cycle, total stays 100, explanation in plain English, applied only when you accept, and only to future scoring runs. The ledger keeps the score snapshot from send time.
 - **Tenant isolation**: every route reuses the existing campaign/lead ownership guards.
@@ -95,6 +105,6 @@ If you adopt the SDK for any call, keep the existing approval gate and idempoten
 
 ## Limits worth knowing
 
-- Verified by unit tests (`tests/test_paypal.py`, 29 tests): money, validation, calibration, grounding, webhook logic, signature-call shape.
-- **Not yet exercised against the live PayPal sandbox or Postgres in this repo's CI.** Run one real sandbox invoice end to end before recording the demo, and confirm the webhook event payload shape in your dashboard's event log (the handler accepts both documented shapes).
+- Verified by mocked unit tests (`tests/test_paypal.py`): money, validation, calibration, grounding, webhook logic, signature-call shape, and Orders request behavior.
+- **Not yet exercised against PayPal Sandbox or Postgres.** Run a sandbox buyer checkout and confirm the webhook events in the Developer Dashboard before claiming end-to-end integration.
 - PayPal's "viewed" state is not handled; only CREATED / SENT / PAID / CANCELLED / REFUNDED are.

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     rationale TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'template',   -- llm | template
     status TEXT NOT NULL DEFAULT 'draft',      -- draft | approved | invoiced
+    payment_method TEXT,                       -- invoice | orders; claimed once per proposal
     terms_hash TEXT,
     approved_by TEXT,
     approved_at TEXT,
@@ -64,15 +65,41 @@ CREATE TABLE IF NOT EXISTS invoices (
 CREATE INDEX IF NOT EXISTS idx_invoices_campaign ON invoices(campaign_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invoices_lead ON invoices(lead_id);
 
+CREATE TABLE IF NOT EXISTS paypal_orders (
+    checkout_id TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL,
+    campaign_id TEXT NOT NULL,
+    owner_id TEXT,
+    proposal_id TEXT NOT NULL UNIQUE,
+    paypal_order_id TEXT UNIQUE,
+    paypal_capture_id TEXT UNIQUE,
+    create_request_id TEXT NOT NULL UNIQUE,
+    capture_request_id TEXT NOT NULL UNIQUE,
+    amount_cents BIGINT NOT NULL,
+    currency TEXT NOT NULL,
+    status TEXT NOT NULL,                      -- CREATING | PENDING | APPROVED | CAPTURING | CAPTURE_PENDING | PAID | FAILED
+    approval_url TEXT,
+    paid_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_paypal_orders_campaign ON paypal_orders(campaign_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_paypal_orders_lead ON paypal_orders(lead_id);
+
 CREATE TABLE IF NOT EXISTS payment_events (
     id SERIAL PRIMARY KEY,
     paypal_event_id TEXT NOT NULL UNIQUE,
     paypal_invoice_id TEXT,
+    paypal_order_id TEXT,
+    paypal_capture_id TEXT,
     event_type TEXT NOT NULL,
     raw_payload TEXT NOT NULL,
     received_at TEXT NOT NULL
 );
+ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS paypal_order_id TEXT;
+ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS paypal_capture_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_payment_events_invoice ON payment_events(paypal_invoice_id);
+CREATE INDEX IF NOT EXISTS idx_payment_events_order ON payment_events(paypal_order_id);
 
 CREATE TABLE IF NOT EXISTS calibration_runs (
     run_id TEXT PRIMARY KEY,
@@ -88,6 +115,11 @@ CREATE TABLE IF NOT EXISTS calibration_runs (
     decided_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_calibration_campaign ON calibration_runs(campaign_id, created_at DESC);
+
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS payment_method TEXT;
+UPDATE proposals AS p SET payment_method = 'invoice'
+FROM invoices AS i
+WHERE i.proposal_id = p.proposal_id AND p.payment_method IS NULL;
 """
 
 # Statuses that count as a resolved outcome for calibration.
@@ -113,6 +145,10 @@ def _scope(owner_id: str | None, params: list, col: str = "owner_id") -> str:
         return ""
     params.append(owner_id)
     return f" AND ({col} = %s OR {col} IS NULL)"
+
+
+class PaymentMethodConflict(Exception):
+    """A proposal is already reserved for the other PayPal payment flow."""
 
 
 # -- proposals ---------------------------------------------------------------
@@ -147,23 +183,27 @@ def latest_proposal(db, lead_id: str) -> dict | None:
         "SELECT * FROM proposals WHERE lead_id = %s ORDER BY created_at DESC LIMIT 1", (lead_id,)).fetchone()))
 
 
-def update_proposal_terms(db, proposal_id: str, *, subject, body, line_items, currency, amount_cents) -> dict:
+def update_proposal_terms(db, proposal_id: str, *, subject, body, line_items, currency, amount_cents) -> dict | None:
     """Any edit puts the proposal back to 'draft' and clears the approval: approval always refers
     to the exact terms that were on screen when the human clicked it."""
-    db._execute(
+    cur = db._execute(
         "UPDATE proposals SET subject=%s, body=%s, line_items=%s, currency=%s, amount_cents=%s, "
         "status='draft', terms_hash=NULL, approved_by=NULL, approved_at=NULL, updated_at=%s "
-        "WHERE proposal_id=%s AND status <> 'invoiced'",
+        "WHERE proposal_id=%s AND status <> 'invoiced' AND payment_method IS NULL",
         (subject, body, json.dumps(line_items), currency, amount_cents, now_iso(), proposal_id))
+    if cur.rowcount != 1:
+        return None
     db._commit()
     return get_proposal(db, proposal_id)
 
 
-def approve_proposal(db, proposal_id: str, approved_by: str, terms_hash: str) -> dict:
-    db._execute(
+def approve_proposal(db, proposal_id: str, approved_by: str, terms_hash: str) -> dict | None:
+    cur = db._execute(
         "UPDATE proposals SET status='approved', approved_by=%s, approved_at=%s, terms_hash=%s, updated_at=%s "
-        "WHERE proposal_id=%s AND status <> 'invoiced'",
+        "WHERE proposal_id=%s AND status <> 'invoiced' AND payment_method IS NULL",
         (approved_by, now_iso(), terms_hash, now_iso(), proposal_id))
+    if cur.rowcount != 1:
+        return None
     db._commit()
     return get_proposal(db, proposal_id)
 
@@ -171,6 +211,125 @@ def approve_proposal(db, proposal_id: str, approved_by: str, terms_hash: str) ->
 def mark_proposal_invoiced(db, proposal_id: str) -> None:
     db._execute("UPDATE proposals SET status='invoiced', updated_at=%s WHERE proposal_id=%s",
                 (now_iso(), proposal_id))
+    db._commit()
+
+
+def claim_proposal_payment(db, proposal_id: str, payment_method: str) -> bool:
+    """Claim a proposal for exactly one payment path. Replays of the same path are allowed."""
+    if payment_method not in {"invoice", "orders"}:
+        raise ValueError("unsupported PayPal payment method")
+    cur = db._execute(
+        "UPDATE proposals SET payment_method=%s, updated_at=%s "
+        "WHERE proposal_id=%s AND status='approved' AND payment_method IS NULL RETURNING proposal_id",
+        (payment_method, now_iso(), proposal_id))
+    if cur.fetchone() is not None:
+        db._commit()
+        return True
+    row = _row(db._execute(
+        "SELECT payment_method FROM proposals WHERE proposal_id=%s", (proposal_id,)).fetchone())
+    return bool(row and row["payment_method"] == payment_method)
+
+
+def _decode_order(row: dict | None) -> dict | None:
+    return row
+
+
+def claim_order(db, *, lead_id: str, campaign_id: str, owner_id: str | None, proposal_id: str,
+                amount_cents: int, currency: str, create_request_id: str,
+                capture_request_id: str) -> tuple[dict, bool]:
+    """Create one local Orders record and reserve the proposal's payment method atomically."""
+    ts = now_iso()
+    claim = db._execute(
+        "UPDATE proposals SET payment_method='orders', updated_at=%s "
+        "WHERE proposal_id=%s AND status='approved' AND payment_method IS NULL RETURNING proposal_id",
+        (ts, proposal_id))
+    if claim.fetchone() is None:
+        prop = _row(db._execute(
+            "SELECT payment_method FROM proposals WHERE proposal_id=%s", (proposal_id,)).fetchone())
+        existing = get_order_by_proposal(db, proposal_id)
+        if prop and prop["payment_method"] == "orders" and existing:
+            db._commit()
+            return existing, False
+        if prop and prop["payment_method"] not in (None, "orders"):
+            raise PaymentMethodConflict("this proposal is already reserved for PayPal invoicing")
+        raise PaymentMethodConflict("the proposal must be approved before checkout")
+
+    checkout_id = new_id("cko")
+    db._execute(
+        "INSERT INTO paypal_orders (checkout_id, lead_id, campaign_id, owner_id, proposal_id, "
+        "create_request_id, capture_request_id, amount_cents, currency, status, created_at, updated_at) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'CREATING',%s,%s)",
+        (checkout_id, lead_id, campaign_id, owner_id, proposal_id, create_request_id, capture_request_id,
+         amount_cents, currency, ts, ts))
+    db._commit()
+    return get_order(db, checkout_id), True
+
+
+def get_order(db, checkout_id: str) -> dict | None:
+    return _decode_order(_row(db._execute(
+        "SELECT * FROM paypal_orders WHERE checkout_id=%s", (checkout_id,)).fetchone()))
+
+
+def get_order_by_proposal(db, proposal_id: str) -> dict | None:
+    return _decode_order(_row(db._execute(
+        "SELECT * FROM paypal_orders WHERE proposal_id=%s", (proposal_id,)).fetchone()))
+
+
+def get_order_by_paypal_id(db, paypal_order_id: str) -> dict | None:
+    return _decode_order(_row(db._execute(
+        "SELECT * FROM paypal_orders WHERE paypal_order_id=%s", (paypal_order_id,)).fetchone()))
+
+
+def get_order_by_capture_id(db, paypal_capture_id: str) -> dict | None:
+    return _decode_order(_row(db._execute(
+        "SELECT * FROM paypal_orders WHERE paypal_capture_id=%s", (paypal_capture_id,)).fetchone()))
+
+
+def retry_order_creation(db, checkout_id: str) -> dict | None:
+    db._execute(
+        "UPDATE paypal_orders SET status='CREATING', updated_at=%s "
+        "WHERE checkout_id=%s AND status='FAILED' AND paypal_order_id IS NULL",
+        (now_iso(), checkout_id))
+    db._commit()
+    return get_order(db, checkout_id)
+
+
+def finish_order_creation(db, checkout_id: str, *, paypal_order_id: str,
+                          approval_url: str | None) -> dict | None:
+    db._execute(
+        "UPDATE paypal_orders SET paypal_order_id=%s, approval_url=COALESCE(%s,approval_url), "
+        "status=CASE WHEN status='CREATING' THEN 'PENDING' ELSE status END, updated_at=%s "
+        "WHERE checkout_id=%s AND status IN ('CREATING','PENDING','APPROVED','CAPTURING','CAPTURE_PENDING') "
+        "AND (paypal_order_id IS NULL OR paypal_order_id=%s)",
+        (paypal_order_id, approval_url, now_iso(), checkout_id, paypal_order_id))
+    db._commit()
+    return get_order(db, checkout_id)
+
+
+def update_order_status(db, checkout_id: str, status: str, *, capture_id: str | None = None,
+                        paid_at: str | None = None) -> dict | None:
+    if status not in {"PENDING", "APPROVED", "CAPTURING", "CAPTURE_PENDING", "PAID", "FAILED"}:
+        raise ValueError("unsupported PayPal Order status")
+    current = _row(db._execute(
+        "SELECT status FROM paypal_orders WHERE checkout_id=%s FOR UPDATE", (checkout_id,)).fetchone())
+    if current is None:
+        return None
+    rank = {"PENDING": 1, "APPROVED": 2, "CAPTURING": 3, "CAPTURE_PENDING": 4, "FAILED": 5, "PAID": 6}
+    if rank[current["status"]] > rank[status]:
+        status = current["status"]
+    db._execute(
+        "UPDATE paypal_orders SET status=%s, paypal_capture_id=COALESCE(%s,paypal_capture_id), "
+        "paid_at=COALESCE(%s,paid_at), updated_at=%s WHERE checkout_id=%s",
+        (status, capture_id, paid_at, now_iso(), checkout_id))
+    db._commit()
+    return get_order(db, checkout_id)
+
+
+def mark_order_failed(db, checkout_id: str) -> None:
+    db._execute(
+        "UPDATE paypal_orders SET status='FAILED', updated_at=%s "
+        "WHERE checkout_id=%s AND status NOT IN ('PAID','CAPTURE_PENDING')",
+        (now_iso(), checkout_id))
     db._commit()
 
 
@@ -275,6 +434,35 @@ def record_event(db, event_id: str, event_type: str, paypal_invoice_id: str | No
     inserted = cur.fetchone() is not None
     db._commit()
     return inserted
+
+
+def record_order_event(db, *, event_id: str, event_type: str, paypal_order_id: str | None,
+                       paypal_capture_id: str | None, raw: str, status: str | None) -> dict:
+    """Insert a verified Orders event and its state transition in one database statement."""
+    cur = db._execute(
+        "WITH inserted AS ("
+        " INSERT INTO payment_events (paypal_event_id, paypal_order_id, paypal_capture_id, event_type, raw_payload, received_at) "
+        " VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (paypal_event_id) DO NOTHING "
+        " RETURNING paypal_event_id"
+        "), updated AS ("
+        " UPDATE paypal_orders SET "
+        " status=CASE "
+        "   WHEN %s::text IS NULL THEN status "
+        "   WHEN %s::text='APPROVED' AND status IN ('CREATING','PENDING') THEN 'APPROVED' "
+        "   WHEN %s::text='CAPTURE_PENDING' AND status NOT IN ('PAID','FAILED') THEN 'CAPTURE_PENDING' "
+        "   WHEN %s::text='PAID' THEN 'PAID' ELSE status END, "
+        " paypal_capture_id=COALESCE(%s,paypal_capture_id), "
+        " paid_at=CASE WHEN %s::text='PAID' THEN COALESCE(%s,paid_at) ELSE paid_at END, updated_at=%s "
+        " FROM inserted WHERE paypal_orders.paypal_order_id=%s "
+        " RETURNING paypal_orders.checkout_id, paypal_orders.status"
+        ") SELECT EXISTS(SELECT 1 FROM inserted) AS inserted, "
+        "(SELECT checkout_id FROM updated LIMIT 1) AS checkout_id, "
+        "(SELECT status FROM updated LIMIT 1) AS status",
+        (event_id, paypal_order_id, paypal_capture_id, event_type, raw, now_iso(),
+         status, status, status, status, paypal_capture_id, status, now_iso(), now_iso(), paypal_order_id))
+    result = _row(cur.fetchone()) or {}
+    db._commit()
+    return result
 
 
 def events_for_invoice(db, paypal_invoice_id: str) -> list[dict]:

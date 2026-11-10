@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { api, type Invoice, type LineItem, type Proposal } from "@/lib/api"
+import { api, type Invoice, type LineItem, type PayPalCheckout, type Proposal } from "@/lib/api"
 import { formatMoney, parseMoney } from "@/lib/money"
 import { InvoiceStatusBadge } from "@/components/invoice-status-badge"
 
@@ -29,6 +29,7 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
   const [loading, setLoading] = React.useState(true)
   const [proposal, setProposal] = React.useState<Proposal | null>(null)
   const [invoice, setInvoice] = React.useState<Invoice | null>(null)
+  const [checkout, setCheckout] = React.useState<PayPalCheckout | null>(null)
   const [subject, setSubject] = React.useState("")
   const [body, setBody] = React.useState("")
   const [rows, setRows] = React.useState<Row[]>([])
@@ -47,7 +48,7 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
   React.useEffect(() => {
     let alive = true
     api.getProposal(leadId)
-      .then((r) => { if (alive) { hydrate(r.proposal); setInvoice(r.invoice) } })
+      .then((r) => { if (alive) { hydrate(r.proposal); setInvoice(r.invoice); setCheckout(r.checkout) } })
       .catch((e) => { if (alive) setError((e as Error).message) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
@@ -108,7 +109,19 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
       ? "Invoice created in PayPal. The payment link was added to the email below; review it and approve the email."
       : "Invoice created. There was no pending email draft to attach the link to; copy the link below.")
     const fresh = await api.getProposal(leadId)
-    hydrate(fresh.proposal)
+    hydrate(fresh.proposal); setCheckout(fresh.checkout)
+  })
+
+  const createOrder = () => run("order", async () => {
+    if (!proposal || proposal.status !== "approved") return
+    const r = await api.createPayPalOrder(leadId, proposal.proposal_id)
+    setCheckout(r.checkout)
+  })
+
+  const refreshOrder = () => run("order-status", async () => {
+    if (!checkout) return
+    const r = await api.refreshPayPalOrder(checkout.checkout_id)
+    setCheckout(r.checkout)
   })
 
   const refresh = () => run("refresh", async () => {
@@ -152,6 +165,22 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
             </Button>
           </div>
         </div>
+      ) : checkout ? (
+        <div className="mt-3 grid gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge variant={checkout.status === "PAID" ? "default" : "outline"}>{checkout.status.replaceAll("_", " ")}</Badge>
+            <span className="text-lg font-semibold tabular-nums">{formatMoney(checkout.amount_cents, checkout.currency)}</span>
+          </div>
+          {checkout.approval_url && checkout.status !== "PAID" && (
+            <a href={checkout.approval_url} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1.5 text-sm underline underline-offset-2">
+              <ExternalLink className="size-3.5" /> Continue to PayPal Sandbox
+            </a>
+          )}
+          <Button variant="outline" size="sm" onClick={refreshOrder} disabled={!!busy}>
+            {busy === "order-status" ? <Loader2 className="animate-spin" /> : <RefreshCw />} Check payment status
+          </Button>
+          <p className="text-xs text-muted-foreground">Checkout is tied to these approved terms. Qualifyr confirms payment with PayPal before marking it paid.</p>
+        </div>
       ) : !proposal ? (
         <div className="mt-3 grid gap-3">
           <p className="text-sm text-muted-foreground">
@@ -177,20 +206,20 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
         <div className="mt-3 grid gap-3">
           <div className="grid gap-1">
             <label className="text-xs text-muted-foreground">Proposal subject</label>
-            <Input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={proposal.status === "invoiced"} />
+            <Input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={proposal.status === "invoiced" || !!proposal.payment_method} />
           </div>
           <div className="grid gap-1">
             <label className="text-xs text-muted-foreground">Proposal email</label>
-            <Textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} className="text-[13px]" disabled={proposal.status === "invoiced"} />
+            <Textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} className="text-[13px]" disabled={proposal.status === "invoiced" || !!proposal.payment_method} />
           </div>
 
           <div className="grid gap-2">
             <label className="text-xs text-muted-foreground">Invoice line items</label>
             {rows.map((r, i) => (
               <div key={i} className="grid grid-cols-[1fr_4rem_7rem] gap-2">
-                <Input value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} aria-label="Item name" />
-                <Input value={r.quantity} onChange={(e) => setRow(i, { quantity: e.target.value })} aria-label="Quantity" inputMode="numeric" />
-                <Input value={r.price} onChange={(e) => setRow(i, { price: e.target.value })} aria-label="Unit price" inputMode="decimal" />
+                <Input value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} aria-label="Item name" disabled={!!proposal.payment_method} />
+                <Input value={r.quantity} onChange={(e) => setRow(i, { quantity: e.target.value })} aria-label="Quantity" inputMode="numeric" disabled={!!proposal.payment_method} />
+                <Input value={r.price} onChange={(e) => setRow(i, { price: e.target.value })} aria-label="Unit price" inputMode="decimal" disabled={!!proposal.payment_method} />
               </div>
             ))}
             <div className="flex flex-wrap items-center justify-between text-sm">
@@ -212,13 +241,18 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
           </label>
           <div className="flex flex-wrap gap-2">
             {proposal.status !== "approved" || dirty ? (
-              <Button onClick={approve} disabled={!!busy || !parsedItems || proposal.status === "invoiced"}>
+              <Button onClick={approve} disabled={!!busy || !parsedItems || proposal.status === "invoiced" || !!proposal.payment_method}>
                 {busy === "approve" ? <Loader2 className="animate-spin" /> : <ShieldCheck />} {dirty ? "Save & approve terms" : "Approve terms"}
               </Button>
             ) : (
-              <Button onClick={createInvoice} disabled={locked || !!busy}>
-                {busy === "invoice" ? <Loader2 className="animate-spin" /> : <Receipt />} Create PayPal invoice &amp; attach link
-              </Button>
+              <>
+                <Button onClick={createInvoice} disabled={locked || !!busy}>
+                  {busy === "invoice" ? <Loader2 className="animate-spin" /> : <Receipt />} Create PayPal invoice &amp; attach link
+                </Button>
+                <Button variant="outline" onClick={createOrder} disabled={!!busy}>
+                  {busy === "order" ? <Loader2 className="animate-spin" /> : <ExternalLink />} One-time PayPal checkout
+                </Button>
+              </>
             )}
           </div>
         </div>

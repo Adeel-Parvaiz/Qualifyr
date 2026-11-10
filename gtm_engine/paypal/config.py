@@ -1,9 +1,7 @@
 """PayPal settings, read from the environment.
 
-Sandbox-only by default. Going live needs BOTH GTM_PAYPAL_ENV=live and
-GTM_PAYPAL_ALLOW_LIVE=1, so a stray variable can never move real money. Credentials live in
-environment variables only (never in the repo); the secret is never logged or returned by
-any endpoint.
+This integration is Sandbox-only. Credentials live in environment variables only (never in
+the repo); the secret is never logged or returned by any endpoint.
 """
 
 from __future__ import annotations
@@ -12,7 +10,6 @@ import os
 from dataclasses import dataclass
 
 SANDBOX_BASE = "https://api-m.sandbox.paypal.com"
-LIVE_BASE = "https://api-m.paypal.com"
 
 # PayPal does not settle every currency Qualifyr's markets use (PKR, AED and SAR are not on its
 # supported list at the time of writing), so invoices default to USD. Override with
@@ -40,6 +37,8 @@ class PayPalConfig:
     currencies: tuple[str, ...]
     max_invoice_cents: int
     invoicer_business_name: str
+    checkout_return_url: str = ""
+    checkout_cancel_url: str = ""
 
     @property
     def configured(self) -> bool:
@@ -51,28 +50,24 @@ class PayPalConfig:
 
     @property
     def is_sandbox(self) -> bool:
-        return self.env != "live"
+        return True
 
     @property
     def base_url(self) -> str:
-        return SANDBOX_BASE if self.is_sandbox else LIVE_BASE
+        return SANDBOX_BASE
 
     def public_status(self) -> dict:
         """Safe-to-return view: no secrets, no ids."""
         return {
             "configured": self.configured,
             "webhook_configured": self.webhook_configured,
-            "mode": "sandbox" if self.is_sandbox else "live",
+            "mode": "sandbox",
             "currencies": list(self.currencies),
             "max_invoice": self.max_invoice_cents / 100,
         }
 
 
 def load_config() -> PayPalConfig:
-    want_live = _env("GTM_PAYPAL_ENV", "PAYPAL_ENV").lower() == "live"
-    allow_live = _env("GTM_PAYPAL_ALLOW_LIVE").lower() in {"1", "true", "yes"}
-    env = "live" if (want_live and allow_live) else "sandbox"
-
     currencies = tuple(
         c.strip().upper()
         for c in (_env("GTM_PAYPAL_CURRENCIES") or ",".join(DEFAULT_CURRENCIES)).split(",")
@@ -88,8 +83,10 @@ def load_config() -> PayPalConfig:
         client_id=_env("GTM_PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_ID"),
         client_secret=_env("GTM_PAYPAL_CLIENT_SECRET", "PAYPAL_CLIENT_SECRET"),
         webhook_id=_env("GTM_PAYPAL_WEBHOOK_ID", "PAYPAL_WEBHOOK_ID"),
-        env=env,
+        env="sandbox",
         currencies=currencies,
         max_invoice_cents=max(100, max_cents),
         invoicer_business_name=_env("GTM_PAYPAL_BUSINESS_NAME"),
+        checkout_return_url=_env("GTM_PAYPAL_CHECKOUT_RETURN_URL"),
+        checkout_cancel_url=_env("GTM_PAYPAL_CHECKOUT_CANCEL_URL"),
     )

@@ -11,6 +11,8 @@ import json
 import logging
 
 from gtm_engine.paypal import store
+from gtm_engine.paypal.client import PayPalClient
+from gtm_engine.paypal.orders import captured_payment_matches, completed_capture, order_matches
 from gtm_engine.paypal.store import now_iso
 
 log = logging.getLogger(__name__)
@@ -39,11 +41,13 @@ def invoice_id_of(event: dict) -> str | None:
     return cands[0] if cands else None
 
 
-def process_event(db, event: dict, raw_body: str) -> dict:
+def process_event(db, event: dict, raw_body: str, client: PayPalClient | None = None) -> dict:
     event_id = str(event.get("id") or "")
     etype = str(event.get("event_type") or "")
     if not event_id:
         return {"ok": False, "reason": "event has no id"}
+    if etype.startswith(("CHECKOUT.ORDER.", "PAYMENT.CAPTURE.")):
+        return _process_order_event(db, event, raw_body, event_id, etype, client)
     pp_invoice = invoice_id_of(event)
     inserted = store.record_event(db, event_id, etype, pp_invoice, raw_body)
     if not inserted:
@@ -66,6 +70,59 @@ def process_event(db, event: dict, raw_body: str) -> dict:
     except Exception as exc:  # noqa: BLE001 - the ledger update above is what matters
         log.debug("outreach event log failed: %s", exc)
     return {"ok": True, "invoice_id": inv["invoice_id"], "status": new_status}
+
+
+def _process_order_event(db, event: dict, raw_body: str, event_id: str, etype: str,
+                         client: PayPalClient | None) -> dict:
+    resource = event.get("resource") or {}
+    related = ((resource.get("supplementary_data") or {}).get("related_ids") or {})
+    order_id = resource.get("id") if etype.startswith("CHECKOUT.ORDER.") else related.get("order_id")
+    capture_id = resource.get("id") if etype.startswith("PAYMENT.CAPTURE.") else None
+    order_id = order_id if isinstance(order_id, str) else None
+    capture_id = capture_id if isinstance(capture_id, str) else None
+    local = store.get_order_by_paypal_id(db, order_id) if order_id else None
+    status = None
+
+    if local and client and etype in {
+        "CHECKOUT.ORDER.APPROVED", "CHECKOUT.ORDER.COMPLETED", "PAYMENT.CAPTURE.COMPLETED",
+    }:
+        remote = client.get_order(order_id)
+        expected = {
+            "order_id": order_id, "checkout_id": local["checkout_id"],
+            "amount_cents": local["amount_cents"], "currency": local["currency"],
+        }
+        if etype == "CHECKOUT.ORDER.APPROVED":
+            if order_matches(remote, **expected, status="APPROVED"):
+                status = "APPROVED"
+        else:
+            capture = completed_capture(remote, **expected)
+            if capture:
+                verified_capture_id = capture["id"]
+                if capture_id and capture_id != verified_capture_id:
+                    status = "CAPTURE_PENDING"
+                else:
+                    capture_id = verified_capture_id
+                    payment = client.get_capture(capture_id)
+                    if captured_payment_matches(
+                        payment, capture_id=capture_id, order_id=order_id,
+                        amount_cents=local["amount_cents"], currency=local["currency"],
+                    ):
+                        status = "PAID"
+                    else:
+                        status = "CAPTURE_PENDING"
+            else:
+                status = "CAPTURE_PENDING"
+
+    result = store.record_order_event(
+        db, event_id=event_id, event_type=etype, paypal_order_id=order_id,
+        paypal_capture_id=capture_id, raw=raw_body, status=status,
+    )
+    if not result.get("inserted"):
+        return {"ok": True, "duplicate": True, "event_id": event_id}
+    if not local:
+        return {"ok": True, "unmatched": True, "event_type": etype}
+    return {"ok": True, "checkout_id": local["checkout_id"],
+            "status": result.get("status") or local["status"]}
 
 
 def sync_from_details(db, inv: dict, details: dict) -> dict:

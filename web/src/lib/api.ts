@@ -410,7 +410,7 @@ export const api = {
   // PayPal lead-to-cash
   paypalStatus: () => request<PayPalStatus>("/paypal/status"),
   getProposal: (leadId: string) =>
-    request<{ proposal: Proposal | null; invoice: Invoice | null }>(`/leads/${leadId}/proposal`),
+    request<{ proposal: Proposal | null; invoice: Invoice | null; checkout: PayPalCheckout | null }>(`/leads/${leadId}/proposal`),
   createProposal: (leadId: string, body: { base_price: number; currency: string; seller_name?: string }) =>
     request<{ proposal: Proposal }>(`/leads/${leadId}/proposal`, { method: "POST", body: JSON.stringify(body) }),
   editProposal: (leadId: string, id: string, body: { subject: string; body: string; currency: string; line_items: LineItem[] }) =>
@@ -419,6 +419,13 @@ export const api = {
     request<{ proposal: Proposal }>(`/leads/${leadId}/proposal/${id}/approve`, { method: "POST" }),
   createInvoice: (leadId: string, proposal_id: string) =>
     request<{ invoice: Invoice; idempotent_replay: boolean; link_attached: boolean }>(`/leads/${leadId}/invoice`, { method: "POST", body: JSON.stringify({ proposal_id }) }),
+  createPayPalOrder: (leadId: string, proposal_id: string) =>
+    request<{ checkout: PayPalCheckout }>(`/leads/${leadId}/paypal-order`, { method: "POST", body: JSON.stringify({ proposal_id }) }),
+  refreshPayPalOrder: (id: string) => request<{ checkout: PayPalCheckout }>(`/paypal/orders/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
+  returnFromPayPalOrder: (body: { checkout_id: string; capability: string; paypal_order_id: string }) =>
+    request<{ checkout: { status: string; paid: boolean; updated_at: string } }>("/paypal/orders/return", { method: "POST", body: JSON.stringify(body) }),
+  paypalOrderStatus: (body: { checkout_id: string; capability: string }) =>
+    request<{ checkout: { status: string; paid: boolean; updated_at: string } }>("/paypal/orders/status", { method: "POST", body: JSON.stringify(body) }),
   invoices: (campaignId?: string) =>
     request<{ invoices: Invoice[] }>(`/invoices${campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ""}`),
   refreshInvoice: (id: string) => request<{ invoice: Invoice }>(`/invoices/${id}/refresh`, { method: "POST" }),
@@ -448,6 +455,11 @@ export interface Proposal {
   line_items: LineItem[]; currency: string; amount_cents: number
   range_min_cents: number; range_max_cents: number; rationale: string; source: "llm" | "template"
   status: "draft" | "approved" | "invoiced"; approved_by: string | null; approved_at: string | null
+  payment_method?: "invoice" | "orders" | null
+}
+export interface PayPalCheckout {
+  checkout_id: string; status: "CREATING" | "PENDING" | "APPROVED" | "CAPTURING" | "CAPTURE_PENDING" | "PAID" | "FAILED"
+  approval_url: string | null; amount_cents: number; currency: string; created_at: string; updated_at: string
 }
 export type InvoiceStatus = "PENDING" | "DRAFT" | "SENT" | "PAID" | "CANCELLED" | "REFUNDED"
 export interface Invoice {

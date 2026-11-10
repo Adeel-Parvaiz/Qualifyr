@@ -5,8 +5,8 @@ passed in rather than imported, which avoids a circular import and keeps these r
 exactly the same multi-tenant guards as the rest of the API.
 
 Auth: every route is protected by the app-wide `verify_request` dependency EXCEPT
-`POST /webhooks/paypal`, which is listed in auth.PUBLIC_PATHS because PayPal cannot send a user
-token - it is protected by PayPal's signature verification instead (fail-closed).
+`POST /webhooks/paypal` and the two Orders buyer callback endpoints. PayPal webhooks are
+signature-verified; buyer callbacks require an unguessable per-checkout capability.
 """
 
 from __future__ import annotations
@@ -41,6 +41,21 @@ class ProposalEdit(BaseModel):
 
 class InvoiceRequest(BaseModel):
     proposal_id: str
+
+
+class OrderRequest(BaseModel):
+    proposal_id: str
+
+
+class CheckoutReturnRequest(BaseModel):
+    checkout_id: str
+    capability: str = Field(min_length=32, max_length=128)
+    paypal_order_id: str = Field(min_length=1, max_length=64)
+
+
+class CheckoutStatusRequest(BaseModel):
+    checkout_id: str
+    capability: str = Field(min_length=32, max_length=128)
 
 
 class CalibrationRunRequest(BaseModel):
@@ -96,7 +111,10 @@ def build_router(*, get_db: Callable, require_lead_access: Callable, check_campa
     def get_proposal(lead_id: str) -> dict:
         db = get_db()
         try:
-            return {"proposal": store.latest_proposal(db, lead_id), "invoice": store.latest_invoice_for_lead(db, lead_id)}
+            proposal = store.latest_proposal(db, lead_id)
+            checkout = store.get_order_by_proposal(db, proposal["proposal_id"]) if proposal else None
+            return {"proposal": proposal, "invoice": store.latest_invoice_for_lead(db, lead_id),
+                    "checkout": service._checkout_view(checkout) if checkout else None}
         finally:
             db.close()
 
@@ -131,8 +149,8 @@ def build_router(*, get_db: Callable, require_lead_access: Callable, check_campa
             prop = store.get_proposal(db, proposal_id)
             if not prop or prop["lead_id"] != lead_id:
                 raise HTTPException(404, "proposal not found")
-            if prop["status"] == "invoiced":
-                raise HTTPException(409, "an invoice was already created from this proposal")
+            if prop["status"] == "invoiced" or prop.get("payment_method"):
+                raise HTTPException(409, "this proposal is already reserved for payment")
             if "{" in body.subject + body.body and "}" in body.subject + body.body:
                 raise HTTPException(422, "unfilled {placeholder} in proposal")
             try:
@@ -156,8 +174,8 @@ def build_router(*, get_db: Callable, require_lead_access: Callable, check_campa
             prop = store.get_proposal(db, proposal_id)
             if not prop or prop["lead_id"] != lead_id:
                 raise HTTPException(404, "proposal not found")
-            if prop["status"] == "invoiced":
-                raise HTTPException(409, "an invoice was already created from this proposal")
+            if prop["status"] == "invoiced" or prop.get("payment_method"):
+                raise HTTPException(409, "this proposal is already reserved for payment")
             try:
                 items, _ = normalize_line_items(prop["line_items"], max_total_cents=c.max_invoice_cents)
                 currency = validate_currency(prop["currency"], c.currencies)
@@ -185,6 +203,87 @@ def build_router(*, get_db: Callable, require_lead_access: Callable, check_campa
                 raise HTTPException(409, str(exc))
             except service.InvoiceInProgress as exc:
                 raise HTTPException(409, str(exc))
+        finally:
+            db.close()
+
+    @router.post("/leads/{lead_id}/paypal-order", dependencies=[Depends(require_lead_access)])
+    def create_paypal_order(lead_id: str, body: OrderRequest,
+                            user_id: str | None = Depends(current_user_id)) -> dict:
+        c = cfg()
+        pp = client(c)
+        db = get_db()
+        try:
+            lead = db.get_lead(lead_id)
+            if not lead:
+                raise HTTPException(404, "lead not found")
+            try:
+                return {"checkout": service.create_order(
+                    db, pp, c, lead=lead, proposal_id=body.proposal_id, owner_id=user_id)}
+            except service.ApprovalRequired as exc:
+                raise HTTPException(409, str(exc))
+            except store.PaymentMethodConflict as exc:
+                raise HTTPException(409, str(exc))
+            except PayPalError as exc:
+                raise HTTPException(exc.status if exc.status in (422, 503) else 502, str(exc))
+            except InvoiceError as exc:
+                raise HTTPException(422, str(exc))
+        finally:
+            db.close()
+
+    @router.get("/paypal/orders/{checkout_id}")
+    def get_paypal_order(checkout_id: str, user_id: str | None = Depends(current_user_id)) -> dict:
+        db = get_db()
+        try:
+            order = store.get_order(db, checkout_id)
+            if not order:
+                raise HTTPException(404, "checkout not found")
+            check_campaign(order["campaign_id"], user_id)
+            return {"checkout": service._checkout_view(order)}
+        finally:
+            db.close()
+
+    @router.post("/paypal/orders/{checkout_id}/refresh")
+    def refresh_paypal_order(checkout_id: str, user_id: str | None = Depends(current_user_id)) -> dict:
+        c = cfg()
+        db = get_db()
+        try:
+            order = store.get_order(db, checkout_id)
+            if not order:
+                raise HTTPException(404, "checkout not found")
+            check_campaign(order["campaign_id"], user_id)
+            return {"checkout": paypal_call(service.refresh_order, db, client(c), c, checkout_id)}
+        finally:
+            db.close()
+
+    @router.post("/paypal/orders/return")
+    def paypal_order_return(body: CheckoutReturnRequest) -> dict:
+        c = cfg()
+        db = get_db()
+        try:
+            try:
+                result = service.return_from_checkout(
+                    db, client(c), c, checkout_id=body.checkout_id, capability=body.capability,
+                    paypal_order_id=body.paypal_order_id)
+            except service.ApprovalRequired:
+                raise HTTPException(404, "checkout not found")
+            except PayPalError as exc:
+                raise HTTPException(502, "PayPal checkout status could not be confirmed")
+            except InvoiceError as exc:
+                raise HTTPException(409, str(exc))
+            return {"checkout": result}
+        finally:
+            db.close()
+
+    @router.post("/paypal/orders/status")
+    def paypal_order_status(body: CheckoutStatusRequest) -> dict:
+        c = cfg()
+        db = get_db()
+        try:
+            try:
+                result = service.get_public_checkout_status(db, c, body.checkout_id, body.capability)
+            except service.ApprovalRequired:
+                raise HTTPException(404, "checkout not found")
+            return {"checkout": result}
         finally:
             db.close()
 
@@ -255,7 +354,7 @@ def build_router(*, get_db: Callable, require_lead_access: Callable, check_campa
             raise HTTPException(400, "malformed event")
         db = get_db()
         try:
-            return webhooks.process_event(db, event, raw.decode("utf-8"))
+            return webhooks.process_event(db, event, raw.decode("utf-8"), pp)
         finally:
             db.close()
 

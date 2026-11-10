@@ -6,8 +6,8 @@ from datetime import date
 
 import pytest
 
-from gtm_engine.paypal import calibration, proposal, seed, webhooks
-from gtm_engine.paypal.client import PayPalClient
+from gtm_engine.paypal import calibration, orders, proposal, seed, service, webhooks
+from gtm_engine.paypal.client import PayPalClient, PayPalError
 from gtm_engine.paypal.config import PayPalConfig, load_config
 from gtm_engine.paypal.invoices import (
     InvoiceError, build_invoice_payload, cents_to_str, invoice_id_from_href, normalize_line_items,
@@ -82,14 +82,15 @@ def test_paypal_link_parsing():
 
 
 # ---------------------------------------------------------------- config safety
-def test_live_mode_needs_double_opt_in(monkeypatch):
+def test_paypal_config_is_always_sandbox(monkeypatch):
     for k in ("GTM_PAYPAL_ENV", "GTM_PAYPAL_ALLOW_LIVE", "PAYPAL_ENV"):
         monkeypatch.delenv(k, raising=False)
     assert load_config().is_sandbox
     monkeypatch.setenv("GTM_PAYPAL_ENV", "live")
-    assert load_config().is_sandbox  # still sandbox without the second flag
     monkeypatch.setenv("GTM_PAYPAL_ALLOW_LIVE", "1")
-    assert not load_config().is_sandbox
+    cfg = load_config()
+    assert cfg.is_sandbox and cfg.base_url == "https://api-m.sandbox.paypal.com"
+    assert cfg.public_status()["mode"] == "sandbox"
 
 
 def test_public_status_never_leaks_secrets():
@@ -118,12 +119,218 @@ class _Http:
         return _Resp(200, {"verification_status": self.verdict})
 
 
+class _OrdersHttp(_Http):
+    def __init__(self):
+        super().__init__()
+        self.requests = []
+
+    def request(self, method, url, headers=None, content=None):
+        self.requests.append((method, url, headers or {}, content))
+        if url.endswith("/v2/checkout/orders"):
+            return _Resp(201, {"id": "ORDER-1", "status": "CREATED"})
+        if url.endswith("/v2/checkout/orders/ORDER-1"):
+            return _Resp(200, {"id": "ORDER-1", "status": "APPROVED"})
+        if url.endswith("/v2/checkout/orders/ORDER-1/capture"):
+            return _Resp(201, {"id": "ORDER-1", "status": "COMPLETED"})
+        if url.endswith("/v2/payments/captures/CAPTURE-1"):
+            return _Resp(200, {"id": "CAPTURE-1", "status": "COMPLETED"})
+        raise AssertionError("unexpected PayPal URL")
+
+
 _HDRS = {"PAYPAL-AUTH-ALGO": "SHA256withRSA", "PAYPAL-CERT-URL": "https://x/c.pem",
          "PAYPAL-TRANSMISSION-ID": "t1", "PAYPAL-TRANSMISSION-SIG": "sig", "PAYPAL-TRANSMISSION-TIME": "2026-11-10T00:00:00Z"}
 
 
 def _client(http, webhook_id="WH-1"):
     return PayPalClient(PayPalConfig("cid-test-1", "sec", webhook_id, "sandbox", ("USD",), 100000, ""), http=http)
+
+
+def test_orders_client_uses_sandbox_paths_and_request_ids():
+    http = _OrdersHttp()
+    client = _client(http)
+    assert client.create_order({"intent": "CAPTURE"}, request_id="create-key")["id"] == "ORDER-1"
+    assert client.get_order("ORDER-1")["status"] == "APPROVED"
+    assert client.capture_order("ORDER-1", request_id="capture-key")["status"] == "COMPLETED"
+    assert client.get_capture("CAPTURE-1")["id"] == "CAPTURE-1"
+
+    assert [r[0] for r in http.requests] == ["POST", "GET", "POST", "GET"]
+    assert all(r[1].startswith("https://api-m.sandbox.paypal.com/") for r in http.requests)
+    assert http.requests[0][2]["PayPal-Request-Id"] == "create-key"
+    assert http.requests[0][2]["Prefer"] == "return=representation"
+    assert http.requests[2][2]["PayPal-Request-Id"] == "capture-key"
+
+
+def test_order_payload_uses_server_amount_and_only_sandbox_approval_links():
+    payload = orders.build_order_payload(
+        checkout_id="cko_1", subject="Setup", line_items=[
+            {"name": "Setup", "description": "", "quantity": 1, "unit_amount_cents": 12500},
+        ], amount_cents=12500, currency="USD",
+        return_url="https://qualifyr.test/paypal/return",
+        cancel_url="https://qualifyr.test/paypal/return?cancelled=1",
+    )
+    assert payload["intent"] == "CAPTURE"
+    assert payload["purchase_units"][0]["amount"]["value"] == "125.00"
+    assert payload["purchase_units"][0]["amount"]["breakdown"]["item_total"]["value"] == "125.00"
+    assert payload["payment_source"]["paypal"]["experience_context"]["user_action"] == "PAY_NOW"
+    assert orders.approval_url({
+        "id": "ORDER-1",
+        "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/checkoutnow?token=ORDER-1"}],
+    }).endswith("token=ORDER-1")
+    with pytest.raises(orders.OrderError):
+        orders.approval_url({"id": "ORDER-1", "links": [
+            {"rel": "approve", "href": "https://www.paypal.com/checkoutnow?token=ORDER-1"},
+        ]})
+
+
+def test_order_transport_errors_distinguish_unsent_and_unknown():
+    import httpx
+
+    class _RaisingHttp:
+        def __init__(self, error):
+            self.error = error
+
+        def request(self, *args, **kwargs):
+            raise self.error
+
+    for error, unknown in ((httpx.ConnectError("refused"), False),
+                           (httpx.ReadTimeout("no response"), True)):
+        with pytest.raises(PayPalError) as raised:
+            _client(_RaisingHttp(error)).create_order({}, request_id="stable-key")
+        assert raised.value.outcome_unknown is unknown
+        assert raised.value.__cause__ is error
+
+
+def _approved_proposal():
+    items = [{"name": "Setup", "description": "", "quantity": 1, "unit_amount_cents": 12500}]
+    return {
+        "proposal_id": "prop_1", "lead_id": "lead_1", "status": "approved",
+        "approved_by": "seller_1", "subject": "Setup", "body": "Terms",
+        "line_items": items, "currency": "USD", "amount_cents": 12500,
+        "terms_hash": terms_hash("Setup", "Terms", items, "USD"),
+    }
+
+
+def test_create_order_reuses_approved_server_terms(monkeypatch):
+    from types import SimpleNamespace
+
+    prop = _approved_proposal()
+    row = {
+        "checkout_id": "cko_1", "lead_id": "lead_1", "campaign_id": "camp_1",
+        "proposal_id": "prop_1", "amount_cents": 12500, "currency": "USD",
+        "status": "CREATING", "create_request_id": "create-1",
+        "capture_request_id": "capture-1", "created_at": "now", "updated_at": "now",
+    }
+    monkeypatch.setattr(service.store, "get_proposal", lambda *_: prop)
+    monkeypatch.setattr(service.store, "claim_order", lambda *a, **k: (row, True))
+    monkeypatch.setattr(service.store, "finish_order_creation", lambda db, checkout_id, **kwargs: (
+        row.update(kwargs, status="PENDING") or row))
+
+    class _Client:
+        def create_order(self, payload, *, request_id):
+            self.payload, self.request_id = payload, request_id
+            return {
+                "id": "ORDER-1", "intent": "CAPTURE", "status": "CREATED",
+                "purchase_units": [{"custom_id": "cko_1", "amount": {"currency_code": "USD", "value": "125.00"}}],
+                "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/checkoutnow?token=ORDER-1"}],
+            }
+
+    cfg = PayPalConfig("client", "secret", "webhook", "sandbox", ("USD",), 1_000_000, "",
+                       "https://qualifyr.test/paypal/return", "https://qualifyr.test/paypal/return")
+    pp = _Client()
+    result = service.create_order(
+        object(), pp, cfg, lead=SimpleNamespace(lead_id="lead_1", campaign_id="camp_1"),
+        proposal_id="prop_1", owner_id="seller_1")
+    assert result["status"] == "PENDING" and result["approval_url"].startswith("https://www.sandbox.paypal.com/")
+    assert pp.request_id == "create-1"
+    assert pp.payload["purchase_units"][0]["amount"]["value"] == "125.00"
+    return_url = pp.payload["payment_source"]["paypal"]["experience_context"]["return_url"]
+    assert "capability=" in return_url and "checkout_id=cko_1" in return_url
+
+
+def test_checkout_return_marks_paid_only_after_order_and_capture_verification(monkeypatch):
+    prop = _approved_proposal()
+    row = {
+        "checkout_id": "cko_1", "lead_id": "lead_1", "proposal_id": "prop_1",
+        "paypal_order_id": "ORDER-1", "amount_cents": 12500,
+        "currency": "USD", "status": "PENDING", "created_at": "now", "updated_at": "now",
+        "capture_request_id": "capture-1",
+    }
+    monkeypatch.setattr(service.store, "get_order", lambda *_: row)
+    monkeypatch.setattr(service.store, "get_proposal", lambda *_: prop)
+
+    def update(_db, _checkout_id, status, *, capture_id=None, paid_at=None):
+        row.update(status=status, paypal_capture_id=capture_id or row.get("paypal_capture_id"),
+                   paid_at=paid_at or row.get("paid_at"), updated_at="now")
+        return row
+
+    monkeypatch.setattr(service.store, "update_order_status", update)
+    monkeypatch.setattr(service.store, "get_order", lambda *_: row)
+
+    approved = {
+        "id": "ORDER-1", "intent": "CAPTURE", "status": "APPROVED",
+        "purchase_units": [{"custom_id": "cko_1", "amount": {"currency_code": "USD", "value": "125.00"}}],
+    }
+    completed = {
+        **approved, "status": "COMPLETED",
+        "purchase_units": [{**approved["purchase_units"][0], "payments": {"captures": [{
+            "id": "CAPTURE-1", "status": "COMPLETED",
+            "amount": {"currency_code": "USD", "value": "125.00"},
+        }]}}],
+    }
+
+    class _Client:
+        def __init__(self):
+            self.orders = [approved, completed]
+            self.captures = 0
+
+        def get_order(self, _):
+            return self.orders.pop(0)
+
+        def capture_order(self, _, *, request_id):
+            assert request_id == "capture-1"
+            self.captures += 1
+
+        def get_capture(self, _):
+            return {
+                "id": "CAPTURE-1", "status": "COMPLETED",
+                "amount": {"currency_code": "USD", "value": "125.00"},
+                "supplementary_data": {"related_ids": {"order_id": "ORDER-1"}},
+            }
+
+    pp = _Client()
+    cfg = PayPalConfig("client", "secret", "webhook", "sandbox", ("USD",), 1_000_000, "")
+    result = service.return_from_checkout(
+        object(), pp, cfg, checkout_id="cko_1",
+        capability=service._checkout_capability(cfg, "cko_1"), paypal_order_id="ORDER-1")
+    assert result["paid"] and result["status"] == "PAID"
+    assert row["paypal_capture_id"] == "CAPTURE-1" and pp.captures == 1
+
+
+def test_checkout_return_never_captures_a_mismatched_amount(monkeypatch):
+    row = {
+        "checkout_id": "cko_1", "lead_id": "lead_1", "proposal_id": "prop_1",
+        "paypal_order_id": "ORDER-1", "amount_cents": 12500,
+        "currency": "USD", "status": "PENDING", "created_at": "now", "updated_at": "now",
+    }
+    monkeypatch.setattr(service.store, "get_order", lambda *_: row)
+    monkeypatch.setattr(service.store, "get_proposal", lambda *_: _approved_proposal())
+
+    class _Client:
+        def get_order(self, _):
+            return {
+                "id": "ORDER-1", "intent": "CAPTURE", "status": "APPROVED",
+                "purchase_units": [{"custom_id": "cko_1",
+                                    "amount": {"currency_code": "USD", "value": "1.00"}}],
+            }
+
+        def capture_order(self, *args, **kwargs):
+            raise AssertionError("an amount mismatch must not be captured")
+
+    cfg = PayPalConfig("client", "secret", "webhook", "sandbox", ("USD",), 1_000_000, "")
+    result = service.return_from_checkout(
+        object(), _Client(), cfg, checkout_id="cko_1",
+        capability=service._checkout_capability(cfg, "cko_1"), paypal_order_id="ORDER-1")
+    assert not result["paid"] and result["status"] == "PENDING"
 
 
 def test_webhook_verification_success_splices_raw_body():
@@ -189,6 +396,53 @@ def test_webhook_unknown_invoice_and_nested_resource(monkeypatch):
     nested = {"id": "E10", "event_type": "INVOICING.INVOICE.PAID", "resource": {"invoice": {"id": "INV2-1"}}}
     assert webhooks.process_event(_Db(), nested, "{}")["status"] == "PAID"
     assert webhooks.process_event(_Db(), {"id": "E11", "event_type": "SOMETHING.ELSE", "resource": {}}, "{}")["ignored"]
+
+
+def test_order_webhook_verifies_provider_capture_before_paid(monkeypatch):
+    class _OrderStore:
+        order = {
+            "checkout_id": "cko_1", "paypal_order_id": "ORDER-1", "amount_cents": 12500,
+            "currency": "USD", "status": "CAPTURE_PENDING",
+        }
+
+        def get_order_by_paypal_id(self, _db, order_id):
+            return self.order if order_id == "ORDER-1" else None
+
+        def record_order_event(self, _db, **kwargs):
+            self.event = kwargs
+            return {"inserted": True, "checkout_id": "cko_1",
+                    "status": kwargs["status"] or self.order["status"]}
+
+    fs = _OrderStore()
+    monkeypatch.setattr(webhooks, "store", fs)
+    remote = {
+        "id": "ORDER-1", "intent": "CAPTURE", "status": "COMPLETED",
+        "purchase_units": [{"custom_id": "cko_1", "amount": {"currency_code": "USD", "value": "125.00"},
+                            "payments": {"captures": [{"id": "CAPTURE-1", "status": "COMPLETED",
+                                "amount": {"currency_code": "USD", "value": "125.00"}}]}}],
+    }
+
+    class _Client:
+        def get_order(self, _):
+            return remote
+
+        def get_capture(self, _):
+            return {
+                "id": "CAPTURE-1", "status": "COMPLETED",
+                "amount": {"currency_code": "USD", "value": "125.00"},
+                "supplementary_data": {"related_ids": {"order_id": "ORDER-1"}},
+            }
+
+    event = {"id": "EVT-1", "event_type": "CHECKOUT.ORDER.COMPLETED",
+             "resource": {"id": "ORDER-1"}}
+    result = webhooks.process_event(_Db(), event, json.dumps(event), _Client())
+    assert result["status"] == "PAID"
+    assert fs.event["status"] == "PAID"
+
+    remote["purchase_units"][0]["amount"]["value"] = "1.00"
+    result = webhooks.process_event(_Db(), {**event, "id": "EVT-2"}, json.dumps(event), _Client())
+    assert result["status"] == "CAPTURE_PENDING"
+    assert fs.event["status"] == "CAPTURE_PENDING"
 
 
 # ---------------------------------------------------------------- calibration

@@ -12,6 +12,7 @@ import logging
 import threading
 import time
 import uuid
+from urllib.parse import quote
 
 from gtm_engine.paypal.config import PayPalConfig
 from gtm_engine.paypal.invoices import invoice_id_from_href
@@ -25,10 +26,13 @@ _TOKEN_LOCK = threading.Lock()
 
 
 class PayPalError(Exception):
-    def __init__(self, message: str, status: int = 502, debug_id: str | None = None):
+    def __init__(self, message: str, status: int = 502, debug_id: str | None = None,
+                 *, provider_status: int | None = None, outcome_unknown: bool = False):
         super().__init__(message)
         self.status = status
         self.debug_id = debug_id
+        self.provider_status = provider_status
+        self.outcome_unknown = outcome_unknown
 
 
 class PayPalClient:
@@ -51,26 +55,48 @@ class PayPalClient:
             if cached and cached[1] > time.time() + 60:
                 return cached[0]
         basic = base64.b64encode(f"{self.cfg.client_id}:{self.cfg.client_secret}".encode()).decode()
-        r = self.http.post(
-            f"{self.cfg.base_url}/v1/oauth2/token",
-            headers={"Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded"},
-            content="grant_type=client_credentials",
-        )
+        import httpx
+        try:
+            r = self.http.post(
+                f"{self.cfg.base_url}/v1/oauth2/token",
+                headers={"Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded"},
+                content="grant_type=client_credentials",
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ProxyError) as exc:
+            raise PayPalError("PayPal authentication connection failed before the request was sent", 502) from exc
+        except httpx.RequestError as exc:
+            raise PayPalError("PayPal authentication request failed", 502) from exc
         if r.status_code != 200:
             raise PayPalError(f"PayPal OAuth failed ({r.status_code}); check the sandbox credentials", 502)
-        data = r.json()
-        token, ttl = data["access_token"], int(data.get("expires_in", 3000))
+        try:
+            data = r.json()
+            token, ttl = data["access_token"], int(data.get("expires_in", 3000))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise PayPalError("PayPal returned an invalid authentication response", 502) from exc
+        if not isinstance(token, str) or not token or ttl <= 0:
+            raise PayPalError("PayPal returned an invalid authentication response", 502)
         with _TOKEN_LOCK:
             _TOKENS[self.cfg.client_id] = (token, time.time() + ttl)
         return token
 
     def _request(self, method: str, path: str, *, body: dict | None = None,
-                 request_id: str | None = None) -> dict:
+                 request_id: str | None = None, prefer: str | None = None) -> dict:
+        import httpx
+
         headers = {"Authorization": f"Bearer {self._token()}", "Content-Type": "application/json"}
         if request_id:
             headers["PayPal-Request-Id"] = request_id  # PayPal-side idempotency
-        r = self.http.request(method, f"{self.cfg.base_url}{path}", headers=headers,
-                              content=json.dumps(body) if body is not None else None)
+        if prefer:
+            headers["Prefer"] = prefer
+        try:
+            r = self.http.request(method, f"{self.cfg.base_url}{path}", headers=headers,
+                                  content=json.dumps(body) if body is not None else None)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ProxyError) as exc:
+            raise PayPalError("PayPal connection failed before the request was sent", 502) from exc
+        except httpx.RequestError as exc:
+            write = method in {"POST", "PUT", "PATCH"}
+            raise PayPalError("PayPal request outcome could not be confirmed", 502,
+                              outcome_unknown=write) from exc
         if r.status_code >= 400:
             debug_id = r.headers.get("paypal-debug-id")
             msg = ""
@@ -83,13 +109,38 @@ class PayPalClient:
                 pass
             log.warning("paypal %s %s -> %s debug_id=%s", method, path, r.status_code, debug_id)
             raise PayPalError(f"PayPal rejected the request ({r.status_code}): {msg or r.reason_phrase}",
-                              status=422 if r.status_code in (400, 422) else 502, debug_id=debug_id)
+                              status=422 if r.status_code in (400, 422) else 502, debug_id=debug_id,
+                              provider_status=r.status_code,
+                              outcome_unknown=method in {"POST", "PUT", "PATCH"}
+                              and (r.status_code >= 500 or r.status_code in (408, 409)))
         if r.status_code == 204 or not r.content:
             return {}
         try:
             return r.json()
-        except ValueError:
-            return {}
+        except ValueError as exc:
+            write = method in {"POST", "PUT", "PATCH"}
+            raise PayPalError("PayPal returned an unreadable response", 502,
+                              provider_status=r.status_code, outcome_unknown=write) from exc
+
+    # -- Orders API v2 -------------------------------------------------------
+
+    def create_order(self, payload: dict, *, request_id: str) -> dict:
+        return self._request(
+            "POST", "/v2/checkout/orders", body=payload, request_id=request_id,
+            prefer="return=representation",
+        )
+
+    def get_order(self, order_id: str) -> dict:
+        return self._request("GET", f"/v2/checkout/orders/{quote(order_id, safe='')}")
+
+    def capture_order(self, order_id: str, *, request_id: str) -> dict:
+        return self._request(
+            "POST", f"/v2/checkout/orders/{quote(order_id, safe='')}/capture",
+            request_id=request_id, prefer="return=representation",
+        )
+
+    def get_capture(self, capture_id: str) -> dict:
+        return self._request("GET", f"/v2/payments/captures/{quote(capture_id, safe='')}")
 
     # -- Invoicing API v2 ----------------------------------------------------
 
