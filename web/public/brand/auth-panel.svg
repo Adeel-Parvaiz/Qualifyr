@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1500" width="1200" height="1500">
+  <defs>
+    <pattern id="microdots" width="36" height="36" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.4" fill="#222"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="1500" fill="#050505"/>
+  <rect x="0" y="720" width="1200" height="780" fill="url(#microdots)" opacity="0.55"/>
+  <g opacity="0.22" fill="none" stroke="#888" stroke-width="1.5">
+    <path d="M790 665 C710 760 730 930 600 1012"/>
+    <path d="M870 790 C760 850 720 970 600 1012"/>
+    <path d="M882 1080 C760 1060 710 1035 600 1012"/>
+    <path d="M805 1250 C730 1160 690 1080 600 1012"/>
+  </g>
+
+  <!-- source lead cards -->
+  <g font-family="Inter, Avenir Next, Helvetica Neue, Arial, sans-serif">
+    <g transform="translate(742 540)">
+      <rect width="330" height="132" rx="18" fill="#0B0B0B" stroke="#2E2E2E" stroke-width="2"/>
+      <circle cx="38" cy="40" r="12" fill="#515151"/>
+      <rect x="62" y="29" width="120" height="16" rx="8" fill="#454545"/>
+      <rect x="62" y="57" width="178" height="11" rx="5.5" fill="#2F2F2F"/>
+      <rect x="24" y="92" width="90" height="14" rx="7" fill="#262626"/>
+      <text x="275" y="45" fill="#5B5B5B" font-size="24" font-weight="650">41</text>
+    </g>
+    <g transform="translate(815 720)">
+      <rect width="310" height="132" rx="18" fill="#0D0D0D" stroke="#444" stroke-width="2"/>
+      <circle cx="38" cy="40" r="12" fill="#9A9A9A"/>
+      <rect x="62" y="29" width="138" height="16" rx="8" fill="#707070"/>
+      <rect x="62" y="57" width="165" height="11" rx="5.5" fill="#3A3A3A"/>
+      <rect x="24" y="92" width="105" height="14" rx="7" fill="#303030"/>
+      <rect x="242" y="24" width="50" height="34" rx="17" fill="#F4F4F4"/>
+      <text x="267" y="48" fill="#000" text-anchor="middle" font-size="18" font-weight="700">86</text>
+    </g>
+    <g transform="translate(820 915)">
+      <rect width="314" height="132" rx="18" fill="#0D0D0D" stroke="#5B5B5B" stroke-width="2"/>
+      <circle cx="38" cy="40" r="12" fill="#BFBFBF"/>
+      <rect x="62" y="29" width="150" height="16" rx="8" fill="#7A7A7A"/>
+      <rect x="62" y="57" width="178" height="11" rx="5.5" fill="#404040"/>
+      <rect x="24" y="92" width="122" height="14" rx="7" fill="#333333"/>
+      <rect x="244" y="24" width="52" height="34" rx="17" fill="#FFFFFF"/>
+      <text x="270" y="48" fill="#000" text-anchor="middle" font-size="18" font-weight="700">92</text>
+    </g>
+    <g transform="translate(740 1115)">
+      <rect width="330" height="132" rx="18" fill="#0B0B0B" stroke="#2E2E2E" stroke-width="2"/>
+      <circle cx="38" cy="40" r="12" fill="#606060"/>
+      <rect x="62" y="29" width="130" height="16" rx="8" fill="#484848"/>
+      <rect x="62" y="57" width="185" height="11" rx="5.5" fill="#2F2F2F"/>
+      <rect x="24" y="92" width="104" height="14" rx="7" fill="#252525"/>
+      <text x="275" y="45" fill="#5B5B5B" font-size="24" font-weight="650">53</text>
+    </g>
+  </g>
+
+  <!-- qualifier target + funnel -->
+  <g transform="translate(462 874)">
+    <path d="M36 38h204l-70 78v76l-64 30v-106z" fill="#080808" stroke="#656565" stroke-width="2.5" stroke-linejoin="round"/>
+    <circle cx="138" cy="94" r="40" fill="#050505" stroke="#EFEFEF" stroke-width="4"/>
+    <circle cx="138" cy="94" r="9" fill="#FFFFFF"/>
+    <path d="M166 122 190 146" stroke="#EFEFEF" stroke-width="4" stroke-linecap="round"/>
+    <path d="M138 42v18M138 128v18M86 94h18M172 94h18" stroke="#909090" stroke-width="3.2" stroke-linecap="round"/>
+  </g>
+
+  <!-- quiet editorial labels -->
+  <g font-family="Inter, Avenir Next, Helvetica Neue, Arial, sans-serif">
+    <text x="92" y="1040" fill="#383838" font-size="22" letter-spacing="4">BUYER SIGNALS</text>
+    <text x="92" y="1087" fill="#777" font-size="28" font-weight="600">Noise in.</text>
+    <text x="92" y="1126" fill="#CFCFCF" font-size="28" font-weight="600">Qualified intent out.</text>
+  </g>
+</svg>

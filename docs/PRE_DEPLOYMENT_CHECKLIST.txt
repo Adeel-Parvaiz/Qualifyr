@@ -1,0 +1,263 @@
+================================================================================
+PRE-DEPLOYMENT AUDIT METHODOLOGY – ENTERPRISE / PRODUCTION-GRADE PLATFORMS
+================================================================================
+A generic, stack-agnostic checklist for gating a web platform before it ships
+(or before it goes public / open source). Work top to bottom; the order is
+roughly "biggest blast radius first." Nothing here is a substitute for a
+dedicated pentest on a high-stakes system – this is the engineer's own gate
+that catches the 90% of issues that never need one.
+
+GUIDING PRINCIPLES
+--------------------------------------------------------------------------------
+1.  VERIFY, DON'T ASSUME. Read the actual code path. "It should check auth"
+    is not a finding; "line N calls the guard, the guard does X" is.
+2.  PRIORITIZE BY BLAST RADIUS. Auth bypass and IDOR before a missing index.
+    Fix what lets a stranger read everyone's data before what's merely ugly.
+3.  FAIL CLOSED. An unset/ misconfigured security variable must DENY, never
+    silently allow. Defaults decide incidents.
+4.  TRUST NOTHING FROM OUTSIDE THE TRUST BOUNDARY. Every byte from a user, a
+    scraped page, a third-party API, a file, or a DB row is untrusted input.
+5.  SEPARATE "WORKS" FROM "SAFE." Tests green != shippable. A feature can work
+    perfectly and still leak every tenant's data.
+6.  DOCUMENT THE GOOD, NOT JUST THE BAD. State what you verified as solid –
+    that is what gives the team confidence to ship.
+
+================================================================================
+PHASE 0 – ESTABLISH THE MAP
+================================================================================
+[ ] Identify the trust boundaries: what runs public, what runs internal, what
+    runs in CI, what the client sees vs. the server holds.
+[ ] List every entry point: HTTP routes, webhooks, cron/queue workers, CLI,
+    file uploads, third-party callbacks.
+[ ] List every data store and every secret, and where each secret lives
+    (env, secret manager, never in code).
+[ ] Note the data classification: PII, credentials, financial, health, public.
+    This sets how hard each later check matters.
+
+================================================================================
+PHASE 1 – AUTHENTICATION & AUTHORIZATION  (highest priority)
+================================================================================
+[ ] Is auth enforced GLOBALLY by default (one app-wide gate), not per-route by
+    memory? A route added tomorrow must be protected without anyone remembering.
+[ ] Token/session verification done correctly: signature, expiry, audience,
+    issuer all checked. For JWT: verify against the real signing key, pin the
+    algorithm (reject "alg: none" and algorithm-confusion).
+[ ] Fail closed: missing auth config => deny all, loudly. Never "unconfigured
+    = allow."
+[ ] AUTHORIZATION (IDOR) – the #1 real-world web vuln. For EVERY object a user
+    can reference by id (account, order, file, campaign, message):
+        - Does the query filter by owner/tenant, or just by the id?
+        - Try to read AND mutate another user's object by changing the id.
+        - Prefer 404 over 403 for objects a user may not see (don't leak
+          existence).
+[ ] Multi-tenant isolation at the DATA layer, not just the API layer. Every
+    tenant-scoped query carries the tenant/owner filter in its WHERE clause.
+[ ] Privilege boundaries: can a normal user hit an admin route? change a role?
+    escalate via a mass-assignment field (e.g. is_admin in a JSON body)?
+[ ] Local/dev auth bypass (if any) is an explicit opt-OUT that can never be on
+    by accident in prod, and logs loudly when active.
+
+================================================================================
+PHASE 2 – INJECTION & UNTRUSTED INPUT
+================================================================================
+[ ] SQL: 100% parameterized. Grep for string-formatted queries
+    (f-strings, %, + , .format) feeding execute(). Dynamic column/table names
+    must come from an allowlist, never user input.
+[ ] Command injection: no shell=True / os.system / exec with user data. Use
+    argument arrays, never a shell string.
+[ ] Deserialization: no pickle / unsafe YAML.load / eval / Function() on
+    untrusted data.
+[ ] Template injection (SSTI) in any server-rendered templates.
+[ ] XSS: output is auto-escaped by the framework; audit every raw-HTML sink
+    (dangerouslySetInnerHTML, v-html, innerHTML, |safe). Scraped/third-party
+    content is untrusted and must be escaped where displayed.
+[ ] Path traversal: user-controlled filenames/paths are normalized and
+    confined to an allowed directory.
+[ ] Header/response injection (CRLF), open redirects (validate redirect targets
+    against an allowlist).
+
+================================================================================
+PHASE 3 – SECRETS & CREDENTIAL MANAGEMENT
+================================================================================
+[ ] No secrets in source, git history, client bundles, logs, or error bodies.
+    Grep history for keys/connection-strings. Remember: secret values are NOT
+    readable back from a secrets manager – copying requires the plaintext.
+[ ] Secrets injected via env/secret manager, never committed. .env is
+    gitignored AND was never committed historically.
+[ ] Secrets at rest are encrypted (per-user secrets with a strong KDF/Fernet/
+    KMS). The encryption key itself is a managed secret, rotated-capable.
+[ ] Logs scrubbed: no passwords, tokens, API keys, full card/PII in log lines.
+[ ] PUBLIC repo rule: never put production secrets on a public repo's CI;
+    forks/PR-workflow injection can exfiltrate them. Contributors bring keys.
+[ ] Third-party keys are least-privilege and scoped (read-only where possible).
+
+================================================================================
+PHASE 4 – DATA PROTECTION & PRIVACY
+================================================================================
+[ ] PII inventory: know every field of personal data and why it's kept.
+[ ] Encryption in transit (TLS everywhere) and at rest for sensitive stores.
+[ ] Before going PUBLIC / open source: scrub real customer data, scraped PII,
+    exports, and ledgers from the repo AND its history (orphan commit or
+    history filter – a new "removal" commit does NOT remove it from old
+    commits).
+[ ] Data retention & deletion: a user can be deleted; their data actually goes.
+[ ] Access logging for sensitive reads where compliance requires it.
+[ ] Compliance scope named explicitly (GDPR / CCPA / HIPAA / PCI) and the
+    controls that satisfy it, or an explicit "N/A because…".
+
+================================================================================
+PHASE 5 – DEPENDENCY & SUPPLY CHAIN
+================================================================================
+[ ] Run the ecosystem auditor (npm audit --omit=dev, pip-audit, osv-scanner,
+    cargo audit, govulncheck). Triage by: is it in the RUNTIME path, and is it
+    REACHABLE with attacker input? A CVE in a dev/CLI-only dep is not a prod
+    risk – but move that dep to devDependencies so it stops polluting the
+    runtime tree and the prod audit.
+[ ] Lockfile committed and respected in CI (npm ci / pip install from lock).
+[ ] No unused / typo-squat-adjacent packages. Remove dead deps.
+[ ] Pin critical versions; have a patch cadence. Enable automated dep updates
+    (Dependabot/Renovate) with CI gating.
+[ ] Verify there's no mixed import of a local util vs. a same-named package
+    (subtle behavior drift – a real bug, not just hygiene).
+
+================================================================================
+PHASE 6 – INPUT VALIDATION, RESOURCE LIMITS & ABUSE
+================================================================================
+[ ] Schema-validate every request body (types, ranges, required fields,
+    MAX LENGTHS – unbounded text = cost/DoS).
+[ ] Rate limiting on public endpoints, and stricter limits on expensive ones
+    (anything that spends money, dispatches jobs, or sends mail).
+[ ] Quotas/caps on resource-heavy actions enforced server-side (not just UI),
+    with correct exemptions for trusted/admin accounts.
+[ ] Pagination on every list endpoint (server-side limit/offset or cursor);
+    counts derive from the real total, not the current page length.
+[ ] Concurrency safety on counters/limits: SELECT-then-UPDATE is a race; use
+    atomic upserts / conditional updates / row locks for anything enforcing a
+    limit or allocating a scarce resource.
+[ ] File uploads: type/size validated, stored outside web root, scanned if
+    applicable, served with correct content-type and no execution.
+
+================================================================================
+PHASE 7 – OUTBOUND REQUESTS & SSRF
+================================================================================
+[ ] Any server-side fetch of a user-influenced URL (crawlers, webhooks,
+    "import from URL", image optimizers): block private/loopback/link-local
+    ranges (127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, ::1, fc00::/7) and
+    cloud metadata (169.254.169.254).
+[ ] Follow-redirect limits and re-validate the target after each redirect.
+[ ] Timeouts and size caps on every outbound call; a slow/huge upstream must
+    not hang or OOM the worker.
+[ ] Respect robots.txt / ToS for crawlers; rate-limit outbound politely.
+[ ] Even if crawls run in ephemeral CI (low SSRF impact), harden for
+    self-hosters who run the same code next to internal services.
+
+================================================================================
+PHASE 8 – CONFIG, HEADERS & TRANSPORT
+================================================================================
+[ ] CORS: explicit origin allowlist (never "*" with credentials). If the API
+    is bearer-token based (not cookies), confirm credentials are off.
+[ ] Security headers: HSTS, X-Content-Type-Options, X-Frame-Options/CSP
+    frame-ancestors, a real Content-Security-Policy, Referrer-Policy.
+[ ] Cookies (if used): Secure, HttpOnly, SameSite set correctly.
+[ ] API docs / debug endpoints / stack traces / verbose errors DISABLED in
+    prod. Debug=false.
+[ ] Separate config per environment (dev/stage/prod); no prod secret reachable
+    from a dev build. Client bundles only contain publishable values.
+[ ] TLS enforced; HTTP redirects to HTTPS.
+
+================================================================================
+PHASE 9 – ERROR HANDLING & OBSERVABILITY
+================================================================================
+[ ] Errors return generic messages to clients; details go to logs only
+    (don't tell an attacker which part of a forged token to fix).
+[ ] Centralized error tracking (Sentry/equivalent) wired and tested.
+[ ] Structured logs with correlation/request ids; log levels sane in prod.
+[ ] Health/readiness endpoints that reflect real dependencies (DB reachable).
+[ ] Metrics + alerts on the signals that matter: error rate, latency, auth
+    failures, quota exhaustion, job failures.
+[ ] A crash in one item/request is isolated – one bad row never kills the run.
+
+================================================================================
+PHASE 10 – DATA LAYER & INTEGRITY
+================================================================================
+[ ] Migrations are idempotent and forward-only in prod; tested on a copy.
+[ ] Indexes exist for every query that filters/sorts at scale (check the plan).
+[ ] Transactions wrap multi-statement invariants; reconnection/retry on
+    transient DB drops.
+[ ] Backups exist AND a restore has actually been tested. Point-in-time if the
+    data warrants it.
+[ ] Connection pooling sized for the runtime (serverless vs. long-lived); no
+    pool exhaustion under expected concurrency.
+[ ] Tests use a disposable/throwaway schema – never run DDL against prod data.
+
+================================================================================
+PHASE 11 – TESTING & REGRESSION GATES
+================================================================================
+[ ] Full suite green locally AND in CI; CI runs the DB-backed/integration
+    tests that are skipped locally.
+[ ] CI is a hard gate: build + typecheck + lint + tests must pass before merge
+    and before deploy. Deploy is blocked on red CI.
+[ ] Regression coverage for every bug you fix (a test that would have caught
+    it). Highest-value tests cover auth, authz, money, and data integrity.
+[ ] Load/soak test the expensive paths at expected and 2–3x peak.
+[ ] Manual exploratory pass on the critical user journeys.
+
+================================================================================
+PHASE 12 – DEPLOYMENT, ROLLBACK & OPERATIONS
+================================================================================
+[ ] Reproducible builds; immutable artifacts; pinned runtime versions.
+[ ] Safe rollout: blue-green / canary / feature flags; a bad deploy affects a
+    fraction first.
+[ ] One-command (or one-click) ROLLBACK, tested.
+[ ] Long/irreversible jobs run out-of-band (queue/CI/worker), not in the
+    request path; dispatched, not executed in-request.
+[ ] Infra as code; least-privilege service accounts; secrets from a manager.
+[ ] A runbook for the top failures; on-call knows where the dashboards are.
+
+================================================================================
+PHASE 13 – OPEN-SOURCE / PUBLIC-RELEASE SPECIFICS
+================================================================================
+[ ] LICENSE file present (code without one is not legally reusable).
+[ ] README: accurate setup from zero, every command/env var verified, honest
+    about what's optional.
+[ ] SECURITY.md with a disclosure contact; CONTRIBUTING.md; CODE_OF_CONDUCT.
+[ ] History and tree scrubbed of secrets AND real data (see Phase 3/4).
+[ ] CI secrets are not production credentials; workflows safe against fork-PR
+    secret exfiltration.
+[ ] Repo metadata correct (description, topics, visibility) and no internal-
+    only notes that shouldn't be public.
+
+================================================================================
+PHASE 14 – DIRECTION / PRODUCT SANITY
+================================================================================
+[ ] Does the code actually implement the stated product and its guarantees
+    (e.g. "nothing sends without approval" is enforced in code, not just copy)?
+[ ] Known gaps and not-yet-built features are listed honestly, separated from
+    bugs.
+[ ] The core promise is validated on REAL data, not just unit fixtures.
+
+================================================================================
+SEVERITY RUBRIC (for writing up findings)
+================================================================================
+CRITICAL – auth bypass, IDOR exposing other tenants, RCE, secret leak,
+           data loss. Block the release.
+HIGH     – privilege escalation, injection with real reach, missing authz on a
+           sensitive route, exploitable dependency in the runtime path.
+MEDIUM   – limit/quota races, missing rate limiting, SSRF reachable only in
+           some deployments, weak validation with cost impact.
+LOW      – defense-in-depth gaps, non-reachable CVEs, minor info disclosure.
+INFO     – hygiene, cosmetics, by-design tradeoffs worth noting.
+
+For each finding record: WHERE (file:line), WHAT (the defect), the FAILURE
+SCENARIO (concrete inputs -> wrong outcome), SEVERITY, and the FIX. If you
+couldn't confirm exploitability, say "PLAUSIBLE" rather than "CONFIRMED."
+
+================================================================================
+MINIMUM BAR TO SHIP
+================================================================================
+- Zero open CRITICAL or HIGH findings (fixed or explicitly risk-accepted by an
+  owner, in writing).
+- CI green and a gate; rollback tested.
+- Secrets off public surfaces; backups restore-tested.
+- The product's own safety guarantees enforced in code and covered by a test.
+================================================================================

@@ -1,0 +1,139 @@
+name: Gather leads
+
+on:
+  workflow_dispatch:
+    inputs:
+      campaign:
+        description: Campaign YAML path or DB id
+        default: config/campaigns/example_retail_islamabad.yaml
+      max_companies:
+        description: Companies to process this run
+        default: "60"
+      min_outreach_ready:
+        description: "Guaranteed floor of qualified+outreach-ready leads (blank = ceil(max_companies/3))"
+        default: ""
+      # commit_results input removed 2026-10-09: the step that used it was deleted below so
+      # lead CSVs never land in the repo. Operators download them from the Upload-artifact step
+      # above (90-day retention). Kept the flag so a stale dispatch URL still parses.
+      commit_results:
+        description: "(deprecated, ignored) CSVs are artifact-only; never committed to the repo"
+        type: boolean
+        default: false
+      user_id:
+        description: Supabase user ID (resolves per-user API keys from DB)
+        default: ""
+  schedule:
+    - cron: "0 3 * * 1"   # Mondays 03:00 UTC (08:00 PKT)
+
+concurrency:
+  # Per campaign, not global. Two campaigns share nothing - separate rows, separate
+  # leads/<campaign>/ output - but one group meant dispatching three at once left
+  # GitHub cancelling the queued ones, so two of the three silently never ran and sat
+  # wedged at "starting" instead. Same campaign twice still queues, which is the case
+  # that genuinely conflicts.
+  group: gather-leads-${{ github.event.inputs.campaign || 'config/campaigns/example_retail_islamabad.yaml' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  gather:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CAMPAIGN: ${{ github.event.inputs.campaign || 'config/campaigns/example_retail_islamabad.yaml' }}
+      MAX_COMPANIES: ${{ github.event.inputs.max_companies || '60' }}
+      MIN_OUTREACH_READY: ${{ github.event.inputs.min_outreach_ready || '' }}
+      COMMIT_RESULTS: ${{ github.event.inputs.commit_results || 'true' }}
+      USER_ID: ${{ github.event.inputs.user_id || '' }}
+      # Infrastructure secrets (shared, repo-level)
+      GTM_DATABASE_URL: ${{ secrets.GTM_DATABASE_URL }}
+      GTM_ENCRYPTION_KEY: ${{ secrets.GTM_ENCRYPTION_KEY }}
+      # Operator-level API keys (fallback when no per-user key in DB).
+      # On grydinteam these are absent – users bring their own via the Settings UI.
+      GTM_BRAVE_API_KEY: ${{ secrets.GTM_BRAVE_API_KEY }}
+      GTM_GROQ_API_KEY: ${{ secrets.GTM_GROQ_API_KEY }}
+      GTM_GOOGLE_PLACES_API_KEY: ${{ secrets.GTM_GOOGLE_PLACES_API_KEY }}
+      GTM_SHEETS_CREDENTIALS_JSON: ${{ secrets.GTM_SHEETS_CREDENTIALS_JSON }}
+      GTM_SHEETS_SPREADSHEET_ID: ${{ secrets.GTM_SHEETS_SPREADSHEET_ID }}
+      GTM_GITHUB_READ_TOKEN: ${{ secrets.GTM_GITHUB_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e ".[api,overture,sheets]"
+
+      # Resolve per-user API keys from Supabase (encrypted at rest).
+      # Overwrites any repo-level key secrets with the user's own keys.
+      # On Hasee10 (no user_id) this is a no-op and repo secrets are used.
+      - name: Resolve user API keys
+        if: env.USER_ID != ''
+        run: python scripts/resolve_user_keys.py "$USER_ID"
+
+      # Local geocode cache only (dedupe/suppression state now lives in Postgres).
+      - name: Restore geocode cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/geocode_cache.json
+          key: gtm-geocode-${{ github.run_id }}
+          restore-keys: gtm-geocode-
+
+      - name: Run campaign
+        run: |
+          extra_args=()
+          if [ -n "$MIN_OUTREACH_READY" ]; then
+            extra_args+=(--min-outreach-ready "$MIN_OUTREACH_READY")
+          fi
+          python -m gtm_engine.cli run "$CAMPAIGN" --max-companies "$MAX_COMPANIES" "${extra_args[@]}"
+
+      - name: Mirror qualified leads to Google Sheets (when configured)
+        if: env.GTM_SHEETS_SPREADSHEET_ID != ''
+        run: |
+          campaign_id=$(python -m gtm_engine.cli campaign-id "$CAMPAIGN")
+          python -m gtm_engine.cli sheets "$campaign_id" || echo "sheets export failed (non-fatal)"
+
+      - name: Save geocode cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/geocode_cache.json
+          key: gtm-geocode-${{ github.run_id }}
+
+      - name: Upload CSVs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: leads-${{ github.run_number }}
+          path: data/exports/*.csv
+          retention-days: 90
+
+      # The "Commit results into leads/" step was DELETED on 2026-10-09. It auto-committed
+      # per-campaign CSVs into leads/<campaign_id>/ on main, which was later found to contain
+      # real lead PII in git history. Lead CSVs now live only in the Upload-artifact step above
+      # (90-day retention, downloadable from the Actions UI) and in the Supabase database -
+      # never in the git repo. Operators who need to persist leads should pull from Supabase or
+      # download the artifact.
+
+      # Beyond GitHub's default failure email: open (or comment on) a tracking issue so a failed
+      # scheduled crawl is visible in the repo, not just in one person's inbox. Keyless - uses
+      # the built-in GITHUB_TOKEN.
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CAMPAIGN_REF: ${{ github.event.inputs.campaign || 'scheduled run' }}
+        run: |
+          body="gather-leads failed for **${CAMPAIGN_REF}**.
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          existing=$(gh issue list --state open --label crawl-failure --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "gather-leads run failed" --label crawl-failure --body "$body" \
+              || gh issue create --title "gather-leads run failed" --body "$body"
+          fi

@@ -1,0 +1,57 @@
+# Secrets
+.env
+.env.*
+!.env.example
+!web/.env.local.example
+sheets-api-key.json
+Cred*.pdf
+*.pem
+
+# Data (local engine state and exports). As of 2026-10-09, CI no longer commits lead CSVs
+# or outreach ledgers into leads/ - the Supabase DB is authoritative and CI uploads CSVs as
+# 90-day artifacts. leads/ stays gitignored belt-and-braces so a future accidental commit of
+# PII can't happen even if someone re-adds the step.
+data/*
+!data/**/.gitkeep
+leads/
+stress_*.log
+stress_*.stdout
+
+# User scratch / strategy docs that stay local only (per CEO; also contain lead run summaries)
+PRICING_PHASES_2.md
+PRICING_STRATEGY_RESEARCH.md
+STRATEGY.md
+planned_out.md
+log.txt
+log_2.txt
+batch_run.log
+batch2_chain.log
+
+# Node
+node_modules/
+dist/
+.next/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+venv/
+*.egg-info/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# venv
+.venv/
+data/outbox/
+
+# Local snapshot taken before clean_test_debris.py --apply. Data, not source.
+debris-backup.json
+_encryption_key.txt
+leads/

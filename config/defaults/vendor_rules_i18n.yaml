@@ -1,0 +1,160 @@
+# Non-English translations of the generic vendor-service signals in vendor_rules.yaml
+# (negative_keywords, vendor_phrases). These are deliberately limited to terms that are
+# universal across campaigns ("consulting", "our clients include") - NOT campaign-specific
+# buyer terms (those come from the user's own target_industries/buyer_keywords and can't be
+# pre-translated; the LLM grounded fallback in llm/tasks.py handles that side instead).
+#
+# Keyed by ISO 639-1 language code, detected from the crawled page text
+# (gtm_engine/enrichment/language.py). Only languages with a real, maintained list are
+# used; any other detected language just skips this i18n boost and falls back to the
+# LLM for ambiguous (UNKNOWN) cases when available.
+
+negative_keywords_i18n:
+  es:
+    - agencia
+    - agencias
+    - consultoria
+    - consultores
+    - empresa de software
+    - desarrollo de software
+    - servicios de ti
+    - soluciones tecnologicas
+    - subcontratacion
+    - autonomo
+    - freelance
+    - marketing digital
+    - servicios de marketing
+    - diseno web
+    - desarrollo web
+    - desarrollo de apps
+    - distribuidor
+    - directorio
+    - agencia de publicidad
+    - agencia creativa
+    - agencia de medios
+    - generacion de leads
+  fr:
+    - agence
+    - agences
+    - conseil
+    - cabinet de conseil
+    - consultants
+    - societe de logiciels
+    - developpement logiciel
+    - services informatiques
+    - solutions informatiques
+    - externalisation
+    - independant
+    - freelance
+    - marketing digital
+    - services marketing
+    - conception web
+    - developpement web
+    - developpement d'applications
+    - distributeur
+    - annuaire
+    - agence de publicite
+    - agence creative
+    - agence media
+    - generation de leads
+  de:
+    - agentur
+    - agenturen
+    - beratung
+    - unternehmensberatung
+    - berater
+    - softwarehaus
+    - softwareentwicklung
+    - it-dienstleistungen
+    - it-losungen
+    - outsourcing
+    - freiberufler
+    - freelancer
+    - digitales marketing
+    - marketingdienstleistungen
+    - webdesign
+    - webentwicklung
+    - app-entwicklung
+    - vertriebspartner
+    - verzeichnis
+    - werbeagentur
+    - kreativagentur
+    - medienagentur
+    - leadgenerierung
+  ar:
+    - وكالة
+    - وكالات
+    - استشارات
+    - شركة استشارية
+    - مستشارون
+    - شركة برمجيات
+    - تطوير برمجيات
+    - خدمات تقنية المعلومات
+    - حلول تقنية
+    - التعهيد
+    - مستقل
+    - عمل حر
+    - التسويق الرقمي
+    - خدمات التسويق
+    - تصميم مواقع
+    - تطوير مواقع
+    - تطوير تطبيقات
+    - موزع
+    - دليل
+    - وكالة إعلانية
+    - وكالة إبداعية
+    - وكالة إعلامية
+
+vendor_phrases_i18n:
+  es:
+    - nuestros clientes
+    - clientes incluyen
+    - confian en nosotros
+    - casos de exito
+    - contratanos
+    - solicitar presupuesto
+    - ayudamos a empresas
+    - ayudamos a marcas
+    - nuestros servicios incluyen
+    - soluciones personalizadas
+    - para tu negocio
+    - haz crecer tu negocio
+  fr:
+    - nos clients
+    - clients incluent
+    - ils nous font confiance
+    - etudes de cas
+    - engagez-nous
+    - demander un devis
+    - nous aidons les entreprises
+    - nous aidons les marques
+    - nos services incluent
+    - solutions sur mesure
+    - pour votre entreprise
+    - developpez votre entreprise
+  de:
+    - unsere kunden
+    - zu unseren kunden zahlen
+    - vertrauen uns
+    - fallstudien
+    - beauftragen sie uns
+    - angebot anfordern
+    - wir helfen unternehmen
+    - wir helfen marken
+    - unsere leistungen umfassen
+    - massgeschneiderte losungen
+    - fur ihr unternehmen
+    - lassen sie ihr unternehmen wachsen
+  ar:
+    - عملاؤنا
+    - من بين عملائنا
+    - يثقون بنا
+    - دراسات حالة
+    - وظفنا
+    - اطلب عرض سعر
+    - نساعد الشركات
+    - نساعد العلامات التجارية
+    - خدماتنا تشمل
+    - حلول مخصصة
+    - لعملك
+    - نمِّ عملك

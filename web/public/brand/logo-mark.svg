@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Qualifyr logo mark">
+  <g color="currentColor" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="31" cy="30" r="18"/>
+    <path d="M43.8 42.8 53 52"/>
+    <path d="M31 7v8M31 45v8M8 30h8M46 30h8" stroke-width="4"/>
+  </g>
+  <circle cx="31" cy="30" r="5" fill="currentColor"/>
+</svg>

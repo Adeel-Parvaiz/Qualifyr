@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .tile { fill: #0a0a0a; }
+    .mk   { stroke: #fafafa; fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+    .dot  { fill: #fafafa; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #fafafa; }
+      .mk   { stroke: #111111; }
+      .dot  { fill: #111111; }
+    }
+  </style>
+  <rect class="tile" x="0" y="0" width="64" height="64" rx="15"/>
+  <g transform="translate(8,8) scale(0.75)">
+    <circle class="mk" cx="30" cy="29" r="17"/>
+    <path class="mk" d="M42.5 41.5 53 52"/>
+    <circle class="dot" cx="30" cy="29" r="6"/>
+  </g>
+</svg>

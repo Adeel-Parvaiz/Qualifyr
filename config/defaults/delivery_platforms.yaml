@@ -1,0 +1,32 @@
+# Delivery/ordering platforms checked by enrichment/online_presence.py's online-gap audit.
+# "_global" platforms operate across many countries and are always checked. Everything else
+# is keyed by lowercase country name (matching campaign.geography.countries / company.country)
+# and only checked for that country - a Pakistani platform like Daraz appearing in a Spanish
+# company's scan would be meaningless, and treating "no Daraz" as a gap for a Spanish company
+# would be a false signal, not a real one.
+
+_global:
+  ubereats: "ubereats\\.com"
+  deliveroo: "deliveroo\\.[a-z.]+"
+  glovo: "glovo\\.(com|[a-z]{2})"
+
+pakistan:
+  foodpanda: "foodpanda\\.pk"
+  daraz: "daraz\\.pk"
+  bykea: "bykea\\.com"
+  careem: "careem\\.com"
+  yango: "yango\\.(com|pk)"
+  cheetay: "cheetay\\.pk"
+  golootlo: "golootlo\\.com"
+
+spain:
+  justeat: "justeat\\.es"
+
+france:
+  justeat: "justeat\\.fr"
+
+germany:
+  lieferando: "lieferando\\.de"
+
+united kingdom:
+  justeat: "just-eat\\.co\\.uk"

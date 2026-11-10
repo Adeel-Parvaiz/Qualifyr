@@ -1,0 +1,124 @@
+# Decision-maker roles on the buying side. Matching is case-insensitive substring.
+buyer_role_whitelist:
+  - founder
+  - co-founder
+  - cofounder
+  - owner
+  - proprietor
+  - ceo
+  - chief executive
+  - managing director
+  - general manager
+  - director
+  - chairman
+  - president
+  - coo
+  - chief operating
+  - cfo
+  - chief financial
+  - cto
+  - chief technology
+  - head of procurement
+  - procurement manager
+  - procurement
+  - purchasing manager
+  - head of purchasing
+  - purchase manager
+  - operations director
+  - operations manager
+  - head of operations
+  - supply chain manager
+  - sourcing manager
+  - head of ecommerce
+  - ecommerce manager
+  - head of marketing
+  - marketing manager
+  - head of it
+  - it manager
+  - head of digital
+  - administrator
+  - principal
+  - medical director
+  - plant manager
+  - factory manager
+
+# Roles that indicate the person sells; never treated as a buyer contact.
+role_blacklist:
+  - sales
+  - business development
+  - bd manager
+  - bdm
+  - account executive
+  - account manager
+  - growth
+  - partner manager
+  - partnerships
+  - content writer
+  - content creator
+  - copywriter
+  - seo
+  - sdr
+  - bdr
+  - telemarketing
+  - customer success
+  - recruiter
+  - talent acquisition
+  - intern
+
+# Mailbox prefixes that are not a person. Kept as fallback business email, never "verified contact".
+generic_email_prefixes:
+  - info
+  - contact
+  - hello
+  - sales
+  - support
+  - admin
+  - office
+  - enquiry
+  - enquiries
+  - inquiry
+  - inquiries
+  - marketing
+  - hr
+  - careers
+  - jobs
+  - noreply
+  - no-reply
+  - webmaster
+  - mail
+  - team
+  - customercare
+  - customer.care
+  - customer-care
+  - customerservice
+  - customer.service
+  - customer-service
+  - care
+  - cs
+  - contactus
+  - contact-us
+  - help
+  - helpdesk
+  - feedback
+  - orders
+  - order
+  - shop
+  - store
+  - online
+  - onlinestore
+  - ecommerce
+  - complaints
+  - query
+  - queries
+  - reception
+  - pr
+  - media
+  - press
+  - accounts
+  - billing
+  - finance
+  - newsletter
+  - privacy
+  - legal
+  - donotreply
+  - do-not-reply

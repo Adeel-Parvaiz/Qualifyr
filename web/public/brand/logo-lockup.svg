@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 180" fill="none">
+  <g color="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" transform="translate(28 35)">
+    <circle cx="55" cy="55" r="37" stroke-width="9"/>
+    <path d="M81 81 101 101" stroke-width="9"/>
+    <circle cx="55" cy="55" r="9" fill="currentColor" stroke="none"/>
+  </g>
+  <text x="155" y="126" fill="currentColor" font-family="Inter, Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="110" font-weight="650" letter-spacing="-5">Qualifyr</text>
+</svg>

@@ -1,0 +1,58 @@
+# Three-step sequence. Placeholders are filled only with facts the engine observed;
+# a missing value falls back to the neutral text in `fallbacks`, never to a guess.
+#
+# Available placeholders:
+#   {first_name} {contact_name} {company_name} {city} {offer} {sender_name}
+#   {personalization_hook}  e.g. "sells online; operates multiple branches; runs on shopify"
+#   {hook_sentence}         the hook rewritten as one natural sentence, or empty
+#   {landing_url}           the public page (config/outreach/settings.yaml: landing_url)
+#
+fallbacks:
+  first_name: "there"
+  city: "Pakistan"
+
+email_1:
+  subject: "{company_name} – quick question"
+  body: |
+    Hi {first_name},
+
+    I came across {company_name} while looking at growing retailers in {city}.{hook_sentence}
+
+    We help businesses like yours with {offer} – without adding headcount or a long implementation.
+
+    Would it be worth a 15-minute call this week to see if it fits? If you're not the right person, I'd appreciate a pointer to whoever looks after operations.
+
+    Best regards,
+    {sender_name}
+
+followup_1:
+  subject: "Re: {company_name} – quick question"
+  body: |
+    Hi {first_name},
+
+    Following up on my note below in case it got buried.
+
+    The short version: {offer}, typically live within a couple of weeks, and we can show you exactly what it would look like for {company_name} in one call.
+
+    Is there a good time this week or next?
+
+    Best,
+    {sender_name}
+
+followup_2:
+  subject: "Re: {company_name} – quick question"
+  body: |
+    Hi {first_name},
+
+    Last note from me – I don't want to clutter your inbox.
+
+    If improving {offer} is on the roadmap for {company_name} this year, I'm happy to send over a one-page summary you can share internally. Otherwise, no problem at all.
+
+    Thanks for your time,
+    {sender_name}
+
+# Appended to every email. Required for a clean stop path; keep it.
+footer: |
+
+    --
+    If you'd rather not hear from me, reply with STOP and I won't email again.

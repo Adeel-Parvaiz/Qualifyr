@@ -1,0 +1,78 @@
+# Sample campaign matching the Phase-1 acceptance test:
+# retail / ecommerce buyer companies in Islamabad / Rawalpindi.
+campaign_id: retail-isb-001
+name: Retail & ecommerce brands, Islamabad/Rawalpindi
+offer: Order-management and inventory automation for growing retailers
+
+target_industries:
+  - retail
+  - ecommerce
+  - clothing
+  - fashion
+  - electronics
+  - furniture
+  - cosmetics
+  - grocery
+
+geography:
+  countries: [Pakistan]
+  cities: [Islamabad, Rawalpindi]
+
+target_roles:
+  - founder
+  - owner
+  - ceo
+  - head of ecommerce
+  - operations manager
+
+buyer_keywords:
+  - retailer
+  - retail
+  - store
+  - brand
+  - shop
+  - boutique
+  - outlet
+  - online store
+  - ecommerce
+  - e-commerce
+  - showroom
+  - franchise
+
+negative_keywords: []
+allowed_vendor_keywords: []
+
+# Overture Maps category substrings (primary source; ~40x OSM coverage in Pakistan).
+overture_categories:
+  - clothing
+  - fashion
+  - shoe_store
+  - electronics
+  - mobile_phone_store
+  - furniture
+  - cosmetic
+  - grocery
+  - supermarket
+  - department_store
+  - shopping_center
+  - home_goods
+
+# Chamber directories: KCCI lists every active Karachi member with its representative
+# (usually the owner). Only used when Karachi is one of the cities.
+chamber_sources: [kcci]
+chamber_name_keywords: [garments, apparel, textile, mart, traders, enterprises]
+
+# OpenStreetMap tags to query in each city. "shop=*" means any shop.
+osm_categories:
+  - shop=clothes
+  - shop=electronics
+  - shop=furniture
+  - shop=cosmetics
+  - shop=shoes
+  - shop=department_store
+  - shop=mall
+  - shop=supermarket
+
+min_score: 70
+max_companies: 120
+max_pages_per_site: 6

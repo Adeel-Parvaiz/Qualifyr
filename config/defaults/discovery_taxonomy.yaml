@@ -1,0 +1,78 @@
+# Discovery taxonomy: maps a business SECTOR to the map categories that find companies in
+# it. The offer is matched to sectors (deterministically, or by the LLM picking from the
+# sector names), and each sector expands to valid OSM tags + Overture category substrings.
+#
+# Why a curated table and not free LLM generation: OSM/Overture categories are a controlled
+# vocabulary - `shop=clothes` is valid, `shop=apparel` is not. Letting a model invent tags
+# yields silent misses. Selecting from this table keeps every derived category real, while
+# the offer still drives *which* sectors are searched. `match` terms are lowercased
+# substrings tested against the offer text and the campaign's target industries.
+sectors:
+  clothing_apparel:
+    match: [clothing, apparel, fashion, garment, textile, boutique, wear, tailor, lawn, pret]
+    osm: [shop=clothes, shop=boutique, shop=fashion_accessories, shop=tailor, shop=fabric]
+    overture: [clothing, fashion, boutique, apparel, shoe_store]
+  footwear:
+    match: [footwear, shoe, shoes, sneaker]
+    osm: [shop=shoes]
+    overture: [shoe_store, footwear]
+  electronics:
+    match: [electronics, mobile, phone, gadget, appliance, computer, laptop, hardware store]
+    osm: [shop=electronics, shop=mobile_phone, shop=computer, shop=hifi]
+    overture: [electronics, mobile_phone_store, computer, appliance]
+  furniture_home:
+    match: [furniture, home goods, home decor, interior, sofa, mattress, kitchenware]
+    osm: [shop=furniture, shop=interior_decoration, shop=houseware, shop=bed]
+    overture: [furniture, home_goods, home_improvement, interior]
+  grocery_supermarket:
+    match: [grocery, supermarket, fmcg, mart, convenience, provision store, general store]
+    osm: [shop=supermarket, shop=convenience, shop=general, shop=greengrocer, shop=department_store, shop=mall]
+    overture: [supermarket, grocery, department_store, shopping_center, convenience_store]
+  pharmacy_health:
+    match: [pharmacy, chemist, medicine, medical store, healthcare, clinic, wellness]
+    osm: [shop=chemist, amenity=pharmacy, amenity=clinic, amenity=doctors]
+    # Specific substrings only: the bare `health`/`medical` LIKE-matched research institutes
+    # (e.g. `medical_research_institute`) and generic health orgs, flooding doctor/pharmacy
+    # searches. These match pharmacies, clinics, doctors and dentists without the noise.
+    overture: [pharmacy, drugstore, clinic, doctor, dentist]
+  beauty_cosmetics:
+    match: [cosmetic, beauty, salon, skincare, makeup, perfume]
+    osm: [shop=cosmetics, shop=beauty, shop=perfumery, shop=hairdresser]
+    overture: [cosmetic, beauty_salon, perfume]
+  food_restaurant:
+    match: [restaurant, cafe, food, bakery, sweets, catering, dining, fast food]
+    osm: [amenity=restaurant, amenity=cafe, amenity=fast_food, shop=bakery, shop=pastry, shop=confectionery]
+    overture: [restaurant, cafe, bakery, food]
+  jewellery:
+    match: [jewellery, jewelry, gold, gems, watch]
+    osm: [shop=jewelry, shop=watches]
+    overture: [jewelry, watch]
+  automotive:
+    match: [automotive, car, vehicle, auto parts, motorcycle, workshop, tyre]
+    osm: [shop=car, shop=car_parts, shop=car_repair, shop=motorcycle, shop=tyres, amenity=fuel]
+    overture: [automotive, car_dealer, auto_parts, car_repair]
+  hardware_construction:
+    match: [hardware, construction, building material, paint, tools, sanitary, tiles]
+    osm: [shop=hardware, shop=doityourself, shop=paint, shop=trade, shop=building_materials]
+    overture: [hardware, building_materials, home_improvement]
+  books_stationery:
+    match: [book, stationery, office supplies, printing]
+    osm: [shop=books, shop=stationery, shop=copyshop]
+    overture: [bookstore, stationery, office_supplies]
+  sports_outdoor:
+    match: [sports, fitness, gym, outdoor, cycle, bicycle]
+    osm: [shop=sports, shop=bicycle, leisure=fitness_centre]
+    overture: [sporting_goods, fitness, bicycle]
+  hospitality:
+    match: [hotel, guest house, hospitality, motel, resort]
+    osm: [tourism=hotel, tourism=guest_house]
+    overture: [hotel, lodging, hospitality]
+  education:
+    match: [school, academy, institute, education, tuition, coaching, college]
+    osm: [amenity=school, amenity=college, office=educational_institution]
+    overture: [education, school, educational_institution]
+  # Broad fallback when nothing specific matches: any retail storefront.
+  general_retail:
+    match: [retail, store, shop, brand, outlet, seller, merchant]
+    osm: ["shop=*"]
+    overture: [store, retail, shop]

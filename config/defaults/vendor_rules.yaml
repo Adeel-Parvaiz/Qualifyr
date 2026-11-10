@@ -1,0 +1,79 @@
+# Companies matching these are sellers of services, not buyers. Any campaign can extend
+# this list; a campaign can whitelist specific ones via allowed_vendor_keywords.
+negative_keywords:
+  - agency
+  - agencies
+  - consulting
+  - consultancy
+  - consultants
+  - software house
+  - software company
+  - software development
+  - it services
+  - it solutions
+  - it company
+  - tech solutions
+  - outsourcing
+  - bpo
+  - call center
+  - freelancer
+  - freelance
+  - marketing services
+  - digital marketing
+  - seo services
+  - web development
+  - web design
+  - app development
+  - reseller
+  - distributor of software
+  - directory
+  - listing
+  - job board
+  - recruitment agency
+  - staffing
+  - advertising agency
+  - creative agency
+  - branding agency
+  - media agency
+  - lead generation
+  - business development services
+  - white label
+  - saas provider
+
+# Phrases a company uses about itself when it sells services to other businesses.
+# Weaker than negative_keywords: several must co-occur before they alone flag a vendor.
+vendor_phrases:
+  - our clients
+  - clients include
+  - trusted by
+  - case studies
+  - case study
+  - portfolio
+  - hire us
+  - get a quote
+  - request a proposal
+  - we help businesses
+  - we help brands
+  - we help companies
+  - our services include
+  - end-to-end solutions
+  - custom solutions
+  - for your business
+  - grow your business
+  - b2b services
+
+# OSM categories that are service vendors by definition. A campaign that really wants
+# them lists the tag in allowed_vendor_keywords (e.g. "office=it").
+vendor_categories:
+  - office=it
+  - office=advertising_agency
+  - office=consulting
+  - office=marketing
+  - office=web_design
+  - office=employment_agency
+  - office=estate_agent
+  - office=telecommunication
+  - office=outsourcing
+  - office=graphic_design
+  - shop=computer_repair
+  - craft=web_developer

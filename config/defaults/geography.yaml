@@ -1,0 +1,12 @@
+# Default search priority. Campaigns pick countries/cities; this only orders them.
+geography_tiers:
+  tier_1:
+    - Pakistan
+  tier_2:
+    - United Arab Emirates
+    - UAE
+  tier_3:
+    - Saudi Arabia
+  tier_4:
+    - Qatar
+    - Oman

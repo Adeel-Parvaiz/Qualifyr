@@ -1,0 +1,66 @@
+# Pakistani cities and provinces for deterministic geography extraction from
+# natural-language campaign descriptions.  Ordered roughly by population.
+# Each entry is lowercased at load time for case-insensitive matching.
+
+cities:
+  - Karachi
+  - Lahore
+  - Islamabad
+  - Rawalpindi
+  - Faisalabad
+  - Multan
+  - Peshawar
+  - Quetta
+  - Sialkot
+  - Gujranwala
+  - Hyderabad
+  - Bahawalpur
+  - Sargodha
+  - Sukkur
+  - Larkana
+  - Sheikhupura
+  - Jhang
+  - Rahim Yar Khan
+  - Mardan
+  - Gujrat
+  - Kasur
+  - Mingora
+  - Dera Ghazi Khan
+  - Sahiwal
+  - Nawabshah
+  - Okara
+  - Mirpur Khas
+  - Chiniot
+  - Kamoke
+  - Abbottabad
+  - Murree
+  - Mansehra
+  - Jhelum
+  - Sadiqabad
+  - Jacobabad
+  - Khanewal
+  - Muzaffargarh
+  - Attock
+  - Taxila
+  - Wah Cantt
+  - Swabi
+  - Kohat
+  - Hub
+  - Khuzdar
+  - Turbat
+  - Gwadar
+  - Gilgit
+  - Skardu
+  - Muzaffarabad
+  - Mirpur
+
+provinces:
+  - Punjab
+  - Sindh
+  - Khyber Pakhtunkhwa
+  - KPK
+  - Balochistan
+  - Gilgit-Baltistan
+  - Azad Kashmir
+  - Islamabad Capital Territory
+  - ICT

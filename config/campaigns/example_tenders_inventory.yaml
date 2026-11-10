@@ -1,0 +1,16 @@
+# Intent-first campaign: organisations with a live PPRA tender for what we sell.
+campaign_id: tenders-inventory-001
+name: Live tenders for inventory / ERP / stores systems (PPRA)
+offer: Inventory and order-management software
+
+target_industries: []
+geography:
+  countries: [Pakistan]
+  cities: []
+target_roles: [procurement, director, general manager]
+buyer_keywords: [stores, inventory, warehouse, procurement, supply chain]
+intent_sources: [ppra]
+intent_keywords: [inventory, erp, software, warehouse management, stores management, barcode, pos, point of sale]
+min_score: 60
+max_companies: 10
+max_pages_per_site: 4

@@ -1,0 +1,139 @@
+QUALIFYR – ROADMAP (all phases, in order)
+=========================================
+Everything free, local-first, deterministic. Each phase is independently
+shippable and ends with tests + a live check.
+
+Recommended order: A -> B -> C -> D -> E -> F.
+A and B first because they change outcomes for the emails already going out;
+C only once a second mailbox exists; D and E as volume grows.
+
+
+PHASE A – PROTECT THE SENDER  (~1/2 day)  [DONE 2026-09-21]
+----------------------------------------
+The Gmail account is the single point of failure; one burn stops everything.
+
+* Warm-up ramp: daily cap starts at ~5 and climbs to 40 over ~3 weeks per
+  mailbox (configurable schedule in config/outreach/settings.yaml), instead of
+  40 flat from day one.
+* Send-time jitter: random spacing (e.g. 30–120 s) instead of a fixed 45 s.
+* OAuth2 Gmail sending (XOAUTH2 via smtplib, or Gmail API) so no App Password
+  sits in secrets; App Password stays as fallback.
+* Reply-rate & bounce-rate guard: auto-pause a mailbox if bounces exceed a
+  threshold in a day.
+
+
+PHASE B – BETTER CONTACTS  (~1 day)  [DONE 2026-09-21; decision-maker email discovery pulled in from G]
+-----------------------------------
+Moves reply rate more than any copy change.
+
+* Pluggable mailbox verifier (validation/verifier.py): Reacher over HTTP, direct SMTP
+  where port 25 is open, Hunter free tier (50/mo), else MX-only. Email status now
+  deliverable / risky / invalid / candidate. NOTE: port 25 is blocked on this PC and on
+  GitHub runners, so confirmation needs a Reacher host with port 25 or the Hunter key;
+  until then discovered addresses stay 'candidate' and are never sent.
+* Phone type: Pakistani mobile (03xx / +92 3xx) vs landline; mobile scores
+  higher in contact quality and appears in the UI.
+* Explicit enrichment waterfall with provenance:
+  OSM tag -> Overture -> mailto -> contact page -> visible freemail,
+  recording which source gave each field (shown in the lead detail).
+
+
+PHASE C – VOLUME WITHOUT SPAM  (~1/2 day)  [DONE 2026-09-21]
+-----------------------------------------
+* Configure extra mailboxes as GTM_MAILBOX_N_USER/_PASSWORD (or OAuth trio), optional
+  _LIMIT and _NAME; legacy GTM_SMTP_* is mailbox #1. `gtm outreach mailboxes <campaign>`
+  shows each mailbox's cap, warm-up day and guard state; the UI shows the same panel.
+* Multi-inbox rotation: 2–3 Gmail accounts, per-inbox daily caps and their own
+  warm-up state; the sequencer round-robins and threads follow-ups from the
+  same inbox that sent Email 1.
+* Ledger and reply sync become per-mailbox.
+
+
+PHASE D – SIGNALS & SOURCES  (1–2 days)  [DONE 2026-09-21]
+---------------------------------------
+* Built: KCCI member directory (29.9k companies with representative names) as a
+  DiscoverySource; RDAP domain age (.com/.net…; no RDAP exists for .pk); GDELT news
+  mentions (best-effort, GDELT rate-limits aggressively); site-quality signals
+  (copyright year, mobile viewport, page weight) in company-quality scoring; Brave Search
+  API as website finder when GTM_BRAVE_API_KEY is set.
+* Not scrapeable today: LCCI directory (needs a session), ICCI (no public member list),
+  SECP public search (Cloudflare). SECP eServices name search is reachable and is a
+  candidate for Phase G intent work.
+* Site-quality signals (copyright year, mobile-friendly, page weight, HTTPS)
+  into company-quality scoring.
+* Domain age via WHOIS/RDAP (free) as a "new business" signal.
+* News/RSS mention check (Google News RSS, free) as a buying signal and
+  personalisation hook.
+* SECP company search + chamber directories (ICCI / LCCI / KCCI) as new
+  DiscoverySource adapters – buyer-heavy Pakistani lists with legal names and
+  incorporation dates; Scrapy or httpx spiders per site.
+
+
+PHASE E – REPLY INTELLIGENCE  (~1/2 day)  [DONE 2026-09-21]
+----------------------------------------
+* Built: outreach/reply_classifier.py (rule-based, quoted history stripped, referral
+  address/name extraction, return-date parsing). Actions: interested/reply stop; not
+  interested stops + suppresses; out-of-office postpones past the return date; auto-reply
+  ignored; wrong person stops and records a referral the reviewer can accept (new Email 1,
+  still approval-gated) or dismiss. Labels and excerpts shown in the UI.
+* Rule-based reply classification: interested / not interested /
+  out-of-office / wrong person (with forwarded address) / unsubscribe.
+  OOO pauses and retries instead of stopping; "wrong person" surfaces the
+  referred contact for approval.
+* Tags visible in Outreach -> Activity and on the lead.
+
+
+PHASE F – SHARING & POLISH  (~1/2 day)  [DONE 2026-09-21]
+--------------------------------------
+* Built: export/sheets.py (service account, GTM_SHEETS_* secrets, `gtm sheets`, UI button,
+  auto-mirror in the gather workflow when configured); landing page site/index.html on
+  GitHub Pages (https://hasee10.github.io/qualifyr/, {landing_url} template placeholder);
+  Settings page: campaign YAML editor with validation + new-campaign template, mailbox
+  table, suppression add/remove, Sheets export.
+* One-way Google Sheets export of qualified leads (free tier, Sheets API) for
+  anyone who won't open the UI.
+* Static demo / landing page on GitHub Pages that emails can link to.
+* UI touches: suppression list view, per-mailbox health panel, campaign YAML
+  editor.
+
+
+ONGOING / GATED ON YOU
+----------------------
+* Your real ICP + offer -> real campaign YAML (blocks nothing above, but
+  everything sent so far is against the sample retail campaign).
+* Supabase migration when you want the UI hosted rather than local.
+* Browser fallback switch-on (enable_browser_fallback in config/engine.yaml)
+  if a campaign shows many JS-only sites – already built.
+
+
+DELIBERATELY NOT PLANNED
+------------------------
+Open/click tracking pixels, LLM reply classification, paid enrichment,
+LinkedIn automation, headless Google Maps scraping, Postal / own mail server,
+full CRM.
+
+
+STATUS
+------
+Engine M1–M9 done, web UI done, human approval required for every email.
+Say "start A" (or whichever phase) to begin.
+
+
+PHASE G – CEO ASKS (after A–F; see docs/DIRECTION.md)  [DONE 2026-09-21]
+-----------------------------------------------------
+* Built: intent/ppra.py (PPRA e-procurement, keyword-filtered + paginated, open tenders
+  only, org-name cleaning, tender = buyer evidence), intent/company_pages.py (RFQ phrases
+  and purchase-implying hiring roles from the company's own pages), llm/ (Ollama / Groq /
+  Gemini; requirement extraction, unlabelled-reply second opinion, hook drafting; every
+  output grounded in observed text or dropped; off by default), reviewer verdicts
+  (correct / wrong company / wrong person / wrong email) with accuracy on the dashboard.
+* Intent & requirement scraping: tenders/RFQs (PPRA, company procurement pages),
+  job posts implying a purchase, "looking for supplier/vendor" posts, expansion
+  announcements – each with source URL + date, feeding scoring and hooks.
+* LLM layer (optional, free/local: Ollama; hosted free tier as fallback):
+  requirement extraction from unstructured text, reply classification, hook
+  drafting from observed facts only. Deterministic path remains default and
+  fallback; every LLM output is labelled and reviewable.
+* Decision-maker personal emails: pattern candidates (first.last@, first@, ...)
+  accepted only when SMTP-verified (Reacher). Unverified guesses never ship.
+* Success metric surfaced in the UI: reviewer-marked correct ÷ shown (target 80%).

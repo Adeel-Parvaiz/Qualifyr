@@ -1,0 +1,8 @@
+{"version": 0.6, "elements": [
+ {"type": "node", "id": 1, "lat": 33.7, "lon": 73.0, "tags": {"name": "Zara Fabrics", "shop": "clothes", "website": "https://www.zarafabrics.pk/", "addr:city": "Islamabad", "addr:street": "Blue Area", "phone": "+92 51 2345678"}},
+ {"type": "node", "id": 2, "lat": 33.7, "lon": 73.0, "tags": {"name": "Zara Fabrics", "shop": "clothes", "website": "http://zarafabrics.pk/pages/f-10-branch", "addr:city": "Islamabad"}},
+ {"type": "way", "id": 3, "center": {"lat": 33.6, "lon": 73.1}, "tags": {"name": "Pixel Digital", "shop": "clothes", "website": "https://pixeldigital.pk", "addr:city": "Islamabad"}},
+ {"type": "node", "id": 4, "tags": {"name": "Unnamed Mobile Shop", "shop": "clothes", "website": "https://www.facebook.com/unnamedmobiles"}},
+ {"type": "node", "id": 5, "tags": {"shop": "clothes"}},
+ {"type": "node", "id": 6, "tags": {"name": "Comingsoon Traders", "shop": "furniture", "website": "https://comingsoon-traders.pk"}}
+]}

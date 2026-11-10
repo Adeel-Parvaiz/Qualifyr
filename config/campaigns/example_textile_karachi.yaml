@@ -1,0 +1,18 @@
+# Karachi manufacturers/traders via the KCCI member directory (Phase D live check).
+campaign_id: textile-khi-001
+name: Textile & garment makers, Karachi (KCCI)
+offer: Inventory and order automation for growing manufacturers
+
+target_industries: [textile, garments, apparel, hosiery, knitwear]
+geography:
+  countries: [Pakistan]
+  cities: [Karachi]
+target_roles: [owner, ceo, managing director, director, general manager]
+buyer_keywords: [textile, garments, apparel, hosiery, knitwear, denim, fabric, weaving, spinning, exporter]
+chamber_sources: [kcci]
+chamber_name_keywords: [textile, garments, apparel, hosiery, knit, denim, weaving, spinning]
+osm_categories: []
+overture_categories: []
+min_score: 70
+max_companies: 12
+max_pages_per_site: 5

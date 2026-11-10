@@ -1,0 +1,47 @@
+# Runtime settings. Any key can be overridden with an env var GTM_<KEY>, e.g. GTM_DB_PATH.
+db_path: data/gtm.sqlite
+export_dir: data/exports
+user_agent: "GTMLeadEngine/0.1 (+business research; contact via site form)"
+request_timeout_s: 30          # Pakistani SMB hosting is slow; 15s lost sites that answer by ~20s
+max_response_bytes: 4000000    # stop reading a response past this size
+per_host_delay_s: 2.0          # shared external services only (Overpass, Nominatim, Hunter)
+site_crawl_delay_s: 0.3        # a company's own site - not a shared rate-limited resource
+max_retries: 2
+host_failure_limit: 3          # circuit breaker: give up on a host after N consecutive failures
+per_company_timeout_s: 90     # hard ceiling per company website
+concurrency: 6                 # companies are almost always on different hosts, so this isn't
+                                # limited by per_host_delay_s - raised now that the real
+                                # per-company bottleneck (site_crawl_delay_s) is fixed
+respect_robots: true
+enable_browser_fallback: false   # pip install -e ".[browser]" && playwright install chromium
+overpass_url: https://overpass-api.de/api/interpreter
+overpass_timeout_s: 90
+enable_search_fallback: true   # Brave Search if GTM_BRAVE_API_KEY is set, else DuckDuckGo HTML
+search_delay_s: 5.0
+enable_domain_age: true         # RDAP (not available for .pk)
+enable_news_signals: true       # GDELT, throttled to one request per 5.5 s
+news_max_companies_per_run: 40
+dns_timeout_s: 5.0
+# Mailbox-level verification backend: auto (Reacher URL > direct SMTP if port 25 open > Hunter key > MX-only)
+email_verification: auto
+reacher_url: null              # e.g. http://localhost:8080 for a self-hosted Reacher
+discover_decision_maker_email: true
+# LLM layer: Ollama locally (no key) or GTM_GROQ_API_KEY / GTM_GEMINI_API_KEY. Used for the
+# per-company intent verdict (qualify by need, not keywords), requirement extraction, the
+# unlabelled-reply second opinion and hook drafting; outputs are grounded in observed text and
+# labelled llm:. On -- but if no provider/key is reachable it degrades to the keyword path, so
+# it never breaks a run. Set provider to groq so the runner does not probe a local Ollama first;
+# GTM_GROQ_API_KEY must be a GitHub Actions secret for the intent layer to run there.
+enable_llm: true
+llm_provider: groq
+llm_model: null
+enable_intent_signals: true     # PPRA tender match + RFQ/hiring phrases on company pages
+# GTM intelligence: job-board postings (Greenhouse/Lever), GitHub org activity, press/RSS
+# mentions. All keyless public APIs; budget-limited per run like domain age / news.
+enable_job_board_signals: true
+job_board_max_companies_per_run: 40
+enable_github_signals: true
+github_max_companies_per_run: 30
+enable_press_signals: true
+press_max_companies_per_run: 40
+log_level: INFO

@@ -1,0 +1,40 @@
+[project]
+name = "gtm-engine"
+version = "1.0.0"
+description = "Qualifyr: offer-driven market-research and lead-discovery engine – describe what you sell, find companies that need it (Pakistan-first)."
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "beautifulsoup4>=4.12",
+    "lxml>=5",
+    "pydantic>=2.7",
+    "pyyaml>=6",
+    "dnspython>=2.6",
+    "tldextract>=5",
+    "tzdata>=2024.1",
+    "psycopg[binary]>=3",
+    "cryptography>=42",
+    "langdetect>=1.0.9",
+]
+
+[project.optional-dependencies]
+# pyjwt[crypto]: Supabase signs access tokens with ES256, which needs `cryptography`.
+api = ["fastapi>=0.115", "uvicorn>=0.30", "pyjwt[crypto]>=2.9"]
+overture = ["duckdb>=1.0"]
+browser = ["playwright>=1.45"]
+sheets = ["google-auth>=2.30"]
+dev = ["pytest>=8", "respx>=0.21", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+gtm = "gtm_engine.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["gtm_engine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -1,0 +1,37 @@
+# Intent & requirement phrases (Phase G). Matched on the company's own pages.
+
+# A published request for quotations / tender / supplier search on the company site.
+intent_rfq_phrases:
+  - request for quotation
+  - request for proposal
+  - rfq
+  - rfp
+  - invitation to bid
+  - invitation for bids
+  - tender notice
+  - call for tenders
+  - looking for suppliers
+  - looking for a supplier
+  - seeking suppliers
+  - vendor registration
+  - supplier registration
+  - procurement notice
+  - expression of interest
+
+# Hiring for these roles implies a purchase or systems change is being budgeted.
+intent_hiring_roles:
+  - procurement manager
+  - procurement officer
+  - purchase manager
+  - purchasing manager
+  - supply chain manager
+  - inventory manager
+  - warehouse manager
+  - erp
+  - sap
+  - odoo
+  - ecommerce manager
+  - e-commerce manager
+  - operations manager
+  - it manager
+  - digital transformation

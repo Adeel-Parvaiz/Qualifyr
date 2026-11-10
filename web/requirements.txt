@@ -1,0 +1,16 @@
+# Installed by Vercel's Python builder for web/api/index.py. Mirrors pyproject.toml's
+# core + api + sheets dependencies (skips overture/browser extras: unused by the fast
+# endpoints that run here – long jobs run in GitHub Actions instead).
+httpx>=0.28
+beautifulsoup4>=4.12
+lxml>=5
+pydantic>=2.7
+pyyaml>=6
+dnspython>=2.6
+tldextract>=5
+tzdata>=2024.1
+psycopg[binary]>=3
+fastapi>=0.115
+pyjwt[crypto]>=2.9
+cryptography>=43
+google-auth>=2.30

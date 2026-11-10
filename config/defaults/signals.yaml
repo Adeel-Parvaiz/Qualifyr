@@ -1,0 +1,131 @@
+# Signals that suggest the company is actively operating / investing (buying evidence).
+buying_signal_keywords:
+  hiring:
+    - we are hiring
+    - careers
+    - join our team
+    - job openings
+    - vacancies
+  expansion:
+    - new branch
+    - now open in
+    - expanding
+    - grand opening
+    - new outlet
+    - new store
+  ecommerce_active:
+    - add to cart
+    - shop now
+    - buy now
+    - checkout
+    - cash on delivery
+    - free shipping
+    - track your order
+  operations_scale:
+    - branches
+    - outlets
+    - nationwide
+    - across pakistan
+    - distribution network
+    - warehouse
+    - fleet
+
+# Pain points a buyer may state publicly. Used for prioritization and personalization hooks.
+pain_signal_keywords:
+  manual_process:
+    - manual
+    - spreadsheet
+    - paperwork
+  delivery_issues:
+    - delayed delivery
+    - delivery delays
+    - order tracking
+  growth_pressure:
+    - growing fast
+    - rapid growth
+    - scaling
+  customer_service_load:
+    - whatsapp us
+    - call us for orders
+    - dm to order
+    - inbox to order
+
+# Technology markers found in HTML source. Names are reported as-is in the CSV.
+technology_markers:
+  shopify:
+    - cdn.shopify.com
+    - shopify.com
+    - myshopify.com
+  woocommerce:
+    - woocommerce
+    - wp-content/plugins/woocommerce
+  wordpress:
+    - wp-content
+    - wp-includes
+  magento:
+    - magento
+    - mage/cookies
+  wix:
+    - wix.com
+    - wixstatic
+  squarespace:
+    - squarespace
+  google_analytics:
+    - googletagmanager.com
+    - google-analytics.com
+    - gtag(
+  facebook_pixel:
+    - connect.facebook.net
+    - fbq(
+  whatsapp_chat:
+    - wa.me/
+    - api.whatsapp.com
+  live_chat:
+    - tawk.to
+    - crisp.chat
+    - intercom
+    - tidio
+
+# Press/RSS entry titles matched against these phrases (Phase: GTM Intelligence).
+# Each group is a distinct kind of buying-window event.
+press_signal_keywords:
+  product_launch:
+    - launches
+    - launch of
+    - introducing
+    - unveils
+    - new product
+    - now available
+  funding:
+    - raises
+    - funding round
+    - series a
+    - series b
+    - series c
+    - seed round
+    - investment from
+    - secures funding
+  partnership:
+    - partners with
+    - partnership with
+    - collaborates with
+    - strategic alliance
+  expansion_press:
+    - expands to
+    - opens new
+    - enters the market
+    - new office
+    - new facility
+
+# Job-board postings for these roles imply growth/budget, not routine backfill.
+job_growth_roles:
+  - procurement
+  - purchasing
+  - supply chain
+  - operations manager
+  - business development
+  - country manager
+  - regional manager
+  - sales manager
+  - expansion
+  - growth

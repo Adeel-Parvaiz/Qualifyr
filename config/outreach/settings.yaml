@@ -1,0 +1,32 @@
+# Outreach settings. Credentials never live here: set GTM_SMTP_USER and GTM_SMTP_PASSWORD
+# (Gmail address + App Password). Without them every send is a dry run to data/outbox/.
+sender_name: "Qualifyr Team"
+reply_to: null                 # defaults to the sending address
+landing_url: https://hasee10.github.io/qualifyr/   # available as {landing_url} in templates
+smtp_host: smtp.gmail.com
+smtp_port: 587
+imap_host: imap.gmail.com
+
+daily_limit: 40                # per mailbox per calendar day (Gmail free tier: stay well under 100)
+delay_between_sends_s: 45      # only used if jitter is disabled
+jitter_min_s: 30               # random spacing between sends
+jitter_max_s: 120
+
+# Warm-up: a new mailbox starts at warmup_start_per_day and grows by warmup_step_per_day
+# each day it has been sending, until daily_limit. Day 1 is the first real send.
+warmup_enabled: true
+warmup_start_per_day: 5
+warmup_step_per_day: 2
+
+# Bounce guard: once at least min_sends_for_bounce_rate emails went out today, a bounce
+# rate above max_bounce_rate pauses sending for the rest of the day.
+max_bounce_rate: 0.10
+min_sends_for_bounce_rate: 5
+send_window_start_hour: 9      # local business hours only
+send_window_end_hour: 18
+timezone: Asia/Karachi
+skip_weekends: true
+
+followup_1_after_days: 3
+followup_2_after_days: 4       # after follow-up 1
+require_approval: true         # every email is reviewed (and optionally edited) in the UI before it is sent

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
+  <defs>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.35" fill="#FFFFFF" opacity="0.11"/>
+    </pattern>
+    <radialGradient id="fade" cx="50%" cy="48%" r="68%">
+      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="66%" stop-color="#000" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.65"/>
+    </radialGradient>
+    <mask id="edgeMask">
+      <rect width="1600" height="900" fill="#fff"/>
+      <ellipse cx="800" cy="430" rx="560" ry="310" fill="#111"/>
+    </mask>
+  </defs>
+  <rect width="1600" height="900" fill="url(#grid)" opacity="0.42" mask="url(#edgeMask)"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="1.2" opacity="0.08">
+    <path d="M-40 135 C160 55 260 210 460 126 C635 52 770 164 920 118 C1110 58 1260 176 1640 70"/>
+    <path d="M-40 208 C160 126 285 275 477 196 C644 127 794 238 964 181 C1146 121 1320 230 1640 136"/>
+    <path d="M-40 703 C210 616 326 790 528 698 C730 607 850 747 1040 679 C1254 602 1392 742 1640 650"/>
+    <path d="M-40 778 C210 686 344 850 558 763 C764 679 886 811 1080 748 C1270 688 1405 821 1640 733"/>
+  </g>
+</svg>

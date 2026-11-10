@@ -1,0 +1,106 @@
+name: Outreach
+
+on:
+  workflow_dispatch:
+    inputs:
+      campaign_id:
+        description: Campaign id (must have been gathered before)
+        default: retail-isb-001
+      limit:
+        description: Max emails this run (blank = daily cap)
+        default: ""
+      dry_run:
+        description: Write .eml files instead of sending
+        type: boolean
+        default: false
+      ignore_window:
+        description: Send outside 09-18 PKT (supervised runs only)
+        type: boolean
+        default: false
+  # No schedule. This job sends real email from a real mailbox, and the credentials to
+  # do it have been live since well before the pipeline was. An unattended weekday cron
+  # means whatever happens to be in the database at 05:00 UTC gets contacted, with no
+  # one looking - which nearly fired against 91 rows of test fixtures. Sends stay
+  # manual (workflow_dispatch, or the approval queue in the UI) until someone decides
+  # the lead list is worth mailing. Re-enable deliberately, not by default:
+  #   schedule:
+  #     - cron: "0 5 * * 1-5"   # weekdays 05:00 UTC = 10:00 PKT, inside the send window
+
+concurrency:
+  group: outreach
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CAMPAIGN_ID: ${{ github.event.inputs.campaign_id || 'retail-isb-001' }}
+      LIMIT: ${{ github.event.inputs.limit || '' }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      IGNORE_WINDOW: ${{ github.event.inputs.ignore_window || 'false' }}
+      # Gmail address + App Password. Absent -> the engine dry-runs and sends nothing.
+      GTM_SMTP_USER: ${{ secrets.GTM_SMTP_USER }}
+      GTM_SMTP_PASSWORD: ${{ secrets.GTM_SMTP_PASSWORD }}
+      # Preferred once set up with `gtm outreach gmail-auth`; App Password is the fallback.
+      GTM_GMAIL_CLIENT_ID: ${{ secrets.GTM_GMAIL_CLIENT_ID }}
+      GTM_GMAIL_CLIENT_SECRET: ${{ secrets.GTM_GMAIL_CLIENT_SECRET }}
+      GTM_GMAIL_REFRESH_TOKEN: ${{ secrets.GTM_GMAIL_REFRESH_TOKEN }}
+      # Additional mailboxes for rotation (Phase C); leave unset until you have them.
+      GTM_MAILBOX_1_USER: ${{ secrets.GTM_MAILBOX_1_USER }}
+      GTM_MAILBOX_1_PASSWORD: ${{ secrets.GTM_MAILBOX_1_PASSWORD }}
+      GTM_MAILBOX_2_USER: ${{ secrets.GTM_MAILBOX_2_USER }}
+      GTM_MAILBOX_2_PASSWORD: ${{ secrets.GTM_MAILBOX_2_PASSWORD }}
+      GTM_MAILBOX_3_USER: ${{ secrets.GTM_MAILBOX_3_USER }}
+      GTM_MAILBOX_3_PASSWORD: ${{ secrets.GTM_MAILBOX_3_PASSWORD }}
+      GTM_DATABASE_URL: ${{ secrets.GTM_DATABASE_URL }}
+      # Reply classification (interested / not interested / wrong person) goes through
+      # the LLM layer during the sync step.
+      GTM_GROQ_API_KEY: ${{ secrets.GTM_GROQ_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e ".[api,overture]"
+
+      - name: Ensure the campaign exists in the database
+        run: |
+          if ! python -c "
+          import os, sys; from gtm_engine.storage.database import Database
+          sys.exit(0 if Database(os.environ['GTM_DATABASE_URL']).campaign_config('$CAMPAIGN_ID') else 1)"; then
+            echo "campaign not gathered yet; gathering first"
+            cfg=$(grep -l "campaign_id: *$CAMPAIGN_ID" config/campaigns/*.yaml | head -1)
+            python -m gtm_engine.cli run "$cfg" --max-companies 60
+          fi
+
+      - name: Sync replies and send due emails
+        run: |
+          args=""
+          [ -n "$LIMIT" ] && args="$args --limit $LIMIT"
+          [ "$DRY_RUN" = "true" ] && args="$args --dry-run"
+          [ "$IGNORE_WINDOW" = "true" ] && args="$args --ignore-window"
+          python -m gtm_engine.cli outreach mailboxes "$CAMPAIGN_ID"
+          python -m gtm_engine.cli outreach send "$CAMPAIGN_ID" $args
+          python -m gtm_engine.cli outreach status "$CAMPAIGN_ID"
+
+      - name: Upload dry-run outbox
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outbox-${{ github.run_number }}
+          path: data/outbox/*.eml
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # The "Commit send ledger" step was DELETED on 2026-10-09. It auto-committed
+      # leads/*/outreach_ledger.json (recipient addresses + send timestamps - PII) into main.
+      # The database is the authoritative send record; the on-disk ledger exists only for the
+      # ledger-based double-send guard within a single runner. Nothing lead-related persists
+      # to git from CI anymore.
