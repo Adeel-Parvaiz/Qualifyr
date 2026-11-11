@@ -13,13 +13,14 @@ dependencies = [
     "tldextract>=5",
     "tzdata>=2024.1",
     "psycopg[binary]>=3",
+    "firebase-admin>=6.5",
+    "google-cloud-firestore>=2.16",
     "cryptography>=42",
     "langdetect>=1.0.9",
 ]
 
 [project.optional-dependencies]
-# pyjwt[crypto]: Supabase signs access tokens with ES256, which needs `cryptography`.
-api = ["fastapi>=0.115", "uvicorn>=0.30", "pyjwt[crypto]>=2.9"]
+api = ["fastapi>=0.115", "uvicorn>=0.30"]
 overture = ["duckdb>=1.0"]
 browser = ["playwright>=1.45"]
 sheets = ["google-auth>=2.30"]

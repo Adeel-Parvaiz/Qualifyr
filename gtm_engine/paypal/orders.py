@@ -88,7 +88,7 @@ def approval_url(order: dict) -> str:
     if not isinstance(links, list):
         raise OrderError("PayPal did not return an order approval link")
     for link in links:
-        if not isinstance(link, dict) or link.get("rel") != "approve":
+        if not isinstance(link, dict) or link.get("rel") not in {"approve", "payer-action"}:
             continue
         href = link.get("href")
         if not isinstance(href, str):

@@ -26,15 +26,16 @@ the repo. **Status** is updated as keys are added.
 | `GTM_GITHUB_READ_TOKEN` | GitHub PAT (no scopes needed) | Raises the GitHub REST rate limit for org-activity signals (`gtm_engine/enrichment/github_signals.py`) from 60/hr to 5000/hr. **Deliberately separate from `GTM_GITHUB_TOKEN`** – that one has `actions:write` and has no business being handed to a job that only reads third-party orgs. Falls back to `GTM_GITHUB_TOKEN` if unset, so this is a hardening step, not a breaking change | free | optional (works keyless, just rate-limited) | ⏳ not set |
 | `GTM_GITHUB_REPO` | – | `owner/repo` for the dispatch call above | n/a | required on Vercel | ⏳ not set |
 | `GTM_GITHUB_REF` | – | Branch to run the dispatched workflow from; defaults to `main` | n/a | optional | – |
-| `GTM_SUPABASE_URL` | Supabase (same project as the database) | Where the API fetches the public JWKS to verify bearer tokens. Every route except `/health` needs one. Not a secret – it is a hostname. Unset means every request 500s **on purpose**: an unset variable must never reopen the API | free | **yes, wherever the API runs** | ⏳ not set |
-| `GTM_AUTH_DISABLED` | – | Local dev only: skips the token check. An opt-*out*, so a typo leaves auth on. Never set this on a deployment | n/a | optional | – |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase | Frontend sign-in. Belongs in `web/.env.local` and in Vercel, not in the root `.env` | free | **yes on Vercel** | ⏳ not set |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase | Publishable key, designed to sit in a browser bundle. Inlined at **build** time, so it needs a redeploy to take effect | free | **yes on Vercel** | ⏳ not set |
+| `FIREBASE_PROJECT_ID` | Firebase | Project used by the API to verify Firebase ID tokens and by the Next.js server to mint session cookies | free | **yes** | ⏳ not set |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase Admin SDK | Server-only service-account JSON for FastAPI and Next.js; use Application Default Credentials locally when available. Never expose this to the browser or commit it | free | required unless ADC or the Auth emulator is used | ⏳ not set |
+| `FIREBASE_AUTH_EMULATOR_HOST` | Firebase Auth Emulator | Local/test Auth emulator host, e.g. `127.0.0.1:9099`; never set in production | n/a | local/testing only | – |
+| `GTM_AUTH_DISABLED` | – | Local dev only: skips the token check. Must be set in the live process environment, not loaded from `.env`; an opt-*out*, so a typo leaves auth on. Never set this on a deployment | n/a | optional | – |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` / `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` / `NEXT_PUBLIC_FIREBASE_PROJECT_ID` / `NEXT_PUBLIC_FIREBASE_APP_ID` | Firebase | Browser Auth configuration. These values are public; set them in `web/.env.local` and Vercel. They are inlined at **build** time, so changes require a redeploy | free | **yes on Vercel** | ⏳ not set |
 | `GTM_COMPANIES_HOUSE_API_KEY` | UK Companies House | `gtm_engine/discovery/companies_house.py` – self-serve registry search (Basic Auth, key as username) | free, self-serve signup at developer.company-information.service.gov.uk | optional | ⏳ not set |
 
-Note: Supabase's **service-role/anon API keys are not used** by this engine – storage
-goes over plain SQL via `psycopg` against `GTM_DATABASE_URL`, not the Supabase REST/client
-API. Keep them out of Vercel/Actions unless something starts calling that API directly.
+Authentication uses Firebase. The database is still accessed through `psycopg` and
+`GTM_DATABASE_URL`; the Firestore data migration is not complete yet. Supabase service-role
+and anon keys are not used by the backend API.
 
 ## Keyless services in use
 

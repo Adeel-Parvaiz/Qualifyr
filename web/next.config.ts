@@ -5,7 +5,8 @@ const tunnelHost = process.env.NGROK_DOMAIN?.trim();
 
 const nextConfig: NextConfig = {
   turbopack: {
-    root: process.cwd(),
+    // Keep dependency resolution anchored to web, regardless of the launch directory.
+    root: __dirname,
   },
   allowedDevOrigins: tunnelHost ? [tunnelHost] : [],
   async rewrites() {

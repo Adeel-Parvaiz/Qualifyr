@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { Play, Download, Plus, Trash2, Pencil, Maximize2, Minimize2 } from "lucide-react"
+import { Play, Loader2, Download, Plus, Trash2, Pencil, Maximize2, Minimize2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -531,18 +531,24 @@ function yamlVal(v: unknown): string {
 }
 
 function RunPanel({ campaign, onFinished }: { campaign: Campaign; onFinished: () => void }) {
-  const { keyCount } = useCampaign()
   const [allowedLeads, setAllowedLeads] = React.useState<number[]>([3, 5, 10])
+  const [limitsReady, setLimitsReady] = React.useState(false)
+  const [unlimited, setUnlimited] = React.useState(false)
   const [max, setMax] = React.useState(String(campaign.max_companies))
   const [progress, setProgress] = React.useState<RunProgress | null>(campaign.live)
+  const [starting, setStarting] = React.useState(false)
+  const dispatchPending = React.useRef(false)
   const [error, setError] = React.useState<string | null>(null)
   const running = progress && !["idle", "completed", "failed"].includes(progress.stage)
-  const noKeys = keyCount === 0
 
   // Tier-gated dropdown choices (P1) – the server also validates this, but offering only
   // the caller's actual tier options up front avoids a round-trip 400.
   React.useEffect(() => {
-    api.myLimits().then((l) => setAllowedLeads(l.allowed_leads_per_run)).catch(() => {})
+    api.myLimits().then((l) => {
+      setAllowedLeads(l.allowed_leads_per_run)
+      setUnlimited(l.unlimited)
+      setLimitsReady(true)
+    }).catch(() => setError("Could not load your plan limits. Refresh to retry."))
   }, [])
 
   // Re-sync the run size to the campaign's configured max_companies whenever it changes. This
@@ -557,14 +563,15 @@ function RunPanel({ campaign, onFinished }: { campaign: Campaign; onFinished: ()
     if (!running) setMax(String(campaign.max_companies))
   }
 
-  // The tier's preset sizes plus the campaign's own configured max_companies, so an edited
-  // value that isn't one of the presets (e.g. 30) is still a real, selectable, selected option
-  // instead of silently falling back to the nearest preset.
+  // Saved campaign sizes may predate this account's plan. Only unlimited operators
+  // can add a custom campaign size to the server's allowed choices.
   const leadOptions = React.useMemo(() => {
     const opts = new Set(allowedLeads)
-    opts.add(campaign.max_companies)
+    if (unlimited) opts.add(campaign.max_companies)
     return Array.from(opts).sort((a, b) => a - b)
-  }, [allowedLeads, campaign.max_companies])
+  }, [allowedLeads, campaign.max_companies, unlimited])
+  const selectedMax = String(leadOptions.includes(Number(max)) ? Number(max)
+    : (leadOptions.filter((n) => n <= Number(max)).at(-1) ?? leadOptions[0] ?? ""))
 
   // Adopt the server's live status whenever the campaign list refreshes (e.g. after returning
   // to the page) – unless a local poll is already tracking an active run, so finer-grained
@@ -589,14 +596,20 @@ function RunPanel({ campaign, onFinished }: { campaign: Campaign; onFinished: ()
   }, [running, campaign.campaign_id, onFinished])
 
   const start = async () => {
+    if (dispatchPending.current || running || !limitsReady || !selectedMax) return
+    dispatchPending.current = true
+    setStarting(true)
     setError(null)
     try {
-      setProgress(await api.runCampaign(campaign.campaign_id, Number(max) || undefined))
+      setProgress(await api.runCampaign(campaign.campaign_id, Number(selectedMax)))
       // Refresh the shared list so campaign.live persists across navigation and the app-level
       // poll picks up the active run immediately.
       onFinished()
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      dispatchPending.current = false
+      setStarting(false)
     }
   }
 
@@ -608,16 +621,16 @@ function RunPanel({ campaign, onFinished }: { campaign: Campaign; onFinished: ()
       <div className="flex flex-wrap items-center gap-2">
         <select
           className="h-8 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs disabled:cursor-not-allowed disabled:opacity-50"
-          value={max}
+          value={selectedMax}
           onChange={(e) => setMax(e.target.value)}
-          disabled={!!running}
+          disabled={starting || !!running || !limitsReady}
         >
           {leadOptions.map((n) => (
             <option key={n} value={n}>{n} leads</option>
           ))}
         </select>
-        <Button size="sm" onClick={start} disabled={!!running || noKeys} title={noKeys ? "Add at least one API key in Settings first" : undefined}>
-          <Play className="size-3.5" /> {running ? "Running…" : "Run"}
+        <Button size="sm" onClick={start} disabled={starting || !!running || !limitsReady || !selectedMax} aria-busy={starting || !!running}>
+          {starting || running ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />} {starting || running ? "Running…" : "Run"}
         </Button>
         <Button size="sm" variant="outline" onClick={() => api.downloadExport(campaign.campaign_id, { min_score: campaign.min_score })}>
           <Download className="size-3.5" /> CSV
@@ -724,7 +737,7 @@ export default function CampaignsPage() {
       {editing && <EditCampaign key={editing.campaign_id} campaign={editing} open={true} onClose={() => setEditing(null)} onSaved={() => { refresh(true); setEditing(null) }} />}
       {error && <p className="text-sm text-destructive">API error: {error}</p>}
       {loading && <p className="text-muted-foreground">Loading…</p>}
-      {!loading && campaigns.length === 0 && (
+      {!loading && !error && campaigns.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center py-14 text-center">
             <div className="flex size-12 items-center justify-center rounded-xl bg-muted text-muted-foreground">
@@ -800,7 +813,9 @@ export default function CampaignsPage() {
                 <span className={cn("size-1.5 rounded-full", statusDotClass(c.last_run?.status))} />
                 {c.last_run
                   ? `Last run ${c.last_run.status} · ${new Date(c.last_run.started_at).toLocaleDateString()}`
-                  : "Not run yet"}
+                  : c.live?.stage === "failed" ? "Last attempt failed — ready to retry"
+                    : c.live && !["idle", "completed"].includes(c.live.stage) ? "Run in progress"
+                      : "Not run yet"}
                 {c.last_run?.status === "completed" && (() => {
                   const n = newLeadsFromRun(c.last_run?.stats_json)
                   return n !== null && (

@@ -32,6 +32,29 @@ def test_get_usage_reports_daily_and_monthly_counts(pg_schema):
     assert rows["runs"]["monthly_count"] == 2
 
 
+def test_refund_returns_allowance_for_retry(pg_schema):
+    from gtm_engine.storage.database import utcnow
+
+    db = Database(pg_schema())
+    today = utcnow().strftime("%Y-%m-%d")
+    assert db.check_and_increment_usage("u1", "runs", 1, monthly_limit=1)
+    assert not db.check_and_increment_usage("u1", "runs", 1, monthly_limit=1)
+    db.refund_usage("u1", "runs", today)
+    assert db.check_and_increment_usage("u1", "runs", 1, monthly_limit=1)
+    db.close()
+
+
+def test_old_refund_does_not_reduce_new_period_usage(pg_schema):
+    db = Database(pg_schema())
+    db.check_and_increment_usage("u1", "runs", 3, usage_date="2026-01-31")
+    db.check_and_increment_usage("u1", "runs", 3, usage_date="2026-02-01")
+    db.refund_usage("u1", "runs", "2026-01-31")
+    row = db._execute("SELECT daily_count, monthly_count FROM usage_counts "
+                      "WHERE user_id = %s AND resource = %s", ("u1", "runs")).fetchone()
+    assert row["daily_count"] == row["monthly_count"] == 1
+    db.close()
+
+
 def test_check_usage_passes_through_monthly_limit_for_runs(pg_schema, monkeypatch):
     """check_usage really enforces the monthly cap (not just the daily one).
 

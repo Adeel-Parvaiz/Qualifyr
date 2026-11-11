@@ -14,9 +14,9 @@ interface Props {
   leadId: string
   locked: boolean
   /** Save the proposal text into the outreach email draft (so the link lands in the real email). */
-  onUseText: (subject: string, body: string) => Promise<void>
+  onUseText?: (subject: string, body: string) => Promise<void>
   /** Reload the outreach draft after the server appended the PayPal link. */
-  onAttached: () => Promise<void>
+  onAttached?: () => Promise<void>
 }
 
 type Row = { name: string; description: string; quantity: string; price: string }
@@ -35,7 +35,7 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
   const [rows, setRows] = React.useState<Row[]>([])
   const [currency, setCurrency] = React.useState("USD")
   const [basePrice, setBasePrice] = React.useState("500")
-  const [useAsEmail, setUseAsEmail] = React.useState(true)
+  const [useAsEmail, setUseAsEmail] = React.useState(!!onUseText)
   const [busy, setBusy] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [note, setNote] = React.useState<string | null>(null)
@@ -101,10 +101,10 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
 
   const createInvoice = () => run("invoice", async () => {
     if (!proposal || proposal.status !== "approved") return
-    if (useAsEmail) await onUseText(proposal.subject, proposal.body)
+    if (useAsEmail && onUseText) await onUseText(proposal.subject, proposal.body)
     const r = await api.createInvoice(leadId, proposal.proposal_id)
     setInvoice(r.invoice)
-    if (r.link_attached) await onAttached()
+    if (r.link_attached && onAttached) await onAttached()
     setNote(r.link_attached
       ? "Invoice created in PayPal. The payment link was added to the email below; review it and approve the email."
       : "Invoice created. There was no pending email draft to attach the link to; copy the link below.")
@@ -136,7 +136,7 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
     <div className="rounded-xl border border-border/70 bg-muted/30 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
-          <Receipt className="size-4 text-brand" /> PayPal invoice
+          <Receipt className="size-4 text-brand" /> PayPal proposal &amp; checkout
           <Badge variant="outline" className="gap-1 text-amber-700 dark:text-amber-400"><FlaskConical /> Sandbox</Badge>
         </div>
         {proposal && <span className="text-xs text-muted-foreground">
@@ -235,10 +235,10 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
               <CheckCircle2 className="size-4" /> Terms approved. Any edit will require approving again.
             </p>
           )}
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          {onUseText && <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <input type="checkbox" checked={useAsEmail} onChange={(e) => setUseAsEmail(e.target.checked)} />
             Use this proposal as the email text (the PayPal link is added to it)
-          </label>
+          </label>}
           <div className="flex flex-wrap gap-2">
             {proposal.status !== "approved" || dirty ? (
               <Button onClick={approve} disabled={!!busy || !parsedItems || proposal.status === "invoiced" || !!proposal.payment_method}>
@@ -246,9 +246,9 @@ export function PayPalInvoicePanel({ leadId, locked, onUseText, onAttached }: Pr
               </Button>
             ) : (
               <>
-                <Button onClick={createInvoice} disabled={locked || !!busy}>
+                {onUseText && <Button onClick={createInvoice} disabled={locked || !!busy}>
                   {busy === "invoice" ? <Loader2 className="animate-spin" /> : <Receipt />} Create PayPal invoice &amp; attach link
-                </Button>
+                </Button>}
                 <Button variant="outline" onClick={createOrder} disabled={!!busy}>
                   {busy === "order" ? <Loader2 className="animate-spin" /> : <ExternalLink />} One-time PayPal checkout
                 </Button>

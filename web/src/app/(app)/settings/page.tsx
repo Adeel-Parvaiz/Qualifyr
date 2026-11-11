@@ -48,6 +48,7 @@ function EncryptionNotice({ what }: { what: string }) {
 }
 
 function ApiKeys() {
+  const { refreshKeys } = useCampaign()
   const [keys, setKeys] = React.useState<{ key_name: string; created_at: string }[]>([])
   const [encryptionAvailable, setEncryptionAvailable] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
@@ -73,12 +74,13 @@ function ApiKeys() {
       await api.saveApiKey(name, val)
       setInputs((p) => ({ ...p, [name]: "" }))
       load()
+      refreshKeys()
     } catch { /* toast? */ } finally { setSaving(null) }
   }
 
   const deleteKey = async (name: string) => {
     if (!confirm(`Remove your ${KEY_INFO[name]?.label ?? name} API key?`)) return
-    try { await api.deleteApiKey(name); load() } catch { /* */ }
+    try { await api.deleteApiKey(name); load(); refreshKeys() } catch { /* */ }
   }
 
   const testKey = async (name: string) => {

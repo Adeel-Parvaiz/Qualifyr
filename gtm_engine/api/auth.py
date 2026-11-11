@@ -1,92 +1,66 @@
-"""Bearer-token auth for the API, backed by Supabase Auth.
-
-Until now the API had none - `main.py` said so in its first line, and once it was deployed
-to Vercel that meant every lead, contact email and export was readable by anyone with the
-URL, and `POST /campaigns/{id}/run` would spend crawl credit for them. CORS did not help:
-it is a browser policy, and `curl` ignores it.
-
-This project's Supabase issues **ES256** tokens signed with a rotating key published at
-`/auth/v1/.well-known/jwks.json`, so there is no shared secret to distribute - we fetch the
-public key and verify locally. Local verification matters on serverless: a round-trip to
-Supabase on every request would add latency to every cold start.
-
-Multi-tenant. The token's `sub` (see `current_user_id`) is the account id, and campaigns
-carry an `owner_id`; routes scope campaigns and their leads to that owner (see
-`require_campaign_access` / `require_lead_access` in `api/main.py`). A campaign created
-before multi-tenancy has a NULL owner and stays visible to everyone (legacy/shared), as do
-the file-based example campaigns. When auth is disabled or bypassed (local operator, tests)
-`current_user_id` is None, which means "no scoping" - the caller sees everything, exactly as
-before multi-tenancy.
-"""
+"""Bearer-token auth for the API, backed by Firebase Authentication."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 
-import jwt
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials
+from firebase_admin.exceptions import FirebaseError
 from fastapi import HTTPException, Request
-from jwt import PyJWKClient
+from google.auth.exceptions import DefaultCredentialsError
 
 log = logging.getLogger(__name__)
 
-# Only endpoint reachable without a token. Deliberately short: anything not named here is
-# protected, so a route added later is safe by default rather than open by default.
-#
-# /docs and /openapi.json are absent for a different reason - main.py does not register
-# them at all unless auth is disabled. FastAPI builds those in its own setup(), outside
-# these dependencies, so listing them here would have done nothing.
-# /webhooks/paypal is public because PayPal cannot send a user token; the route itself verifies
-# PayPal's signature. The two checkout callback endpoints are public only because the buyer has
-# no Qualifyr account; each requires the unguessable capability created for that checkout.
 PUBLIC_PATHS = frozenset({
     "/health", "/pricing/tiers", "/webhooks/paypal",
     "/paypal/orders/return", "/paypal/orders/status",
 })
 
-_ALGORITHMS = ["ES256"]
-_jwk_client: PyJWKClient | None = None
 
-
-def _project_url() -> str:
-    url = os.environ.get("GTM_SUPABASE_URL", "").strip().rstrip("/")
-    if not url:
+def _firebase_auth() -> firebase_auth.Client:
+    project_id = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
+    if not project_id:
         raise HTTPException(
             500,
-            "GTM_SUPABASE_URL is not set, so no request can be authenticated. Refusing to "
-            "serve rather than fall open - an unset variable must never reopen the API.",
+            "FIREBASE_PROJECT_ID is not set, so no request can be authenticated. "
+            "Refusing to serve rather than fail open.",
         )
-    return url
 
+    try:
+        app = firebase_admin.get_app()
+    except ValueError:
+        service_account = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+        try:
+            if os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
+                credential = None
+            elif service_account:
+                credential = credentials.Certificate(json.loads(service_account))
+            else:
+                credential = credentials.ApplicationDefault()
+            app = firebase_admin.initialize_app(
+                credential,
+                {"projectId": project_id},
+            )
+        except (DefaultCredentialsError, json.JSONDecodeError, ValueError) as exc:
+            log.error("Firebase Admin initialization failed: %s", exc)
+            raise HTTPException(503, "Firebase Admin credentials are unavailable") from exc
 
-def jwk_client() -> PyJWKClient:
-    """Cached JWKS client. Keys are cached in-process, so a warm function never refetches."""
-    global _jwk_client
-    if _jwk_client is None:
-        _jwk_client = PyJWKClient(
-            f"{_project_url()}/auth/v1/.well-known/jwks.json",
-            cache_keys=True,
-            lifespan=3600,
-        )
-    return _jwk_client
+    if app.project_id != project_id:
+        raise HTTPException(500, "Firebase Admin project does not match FIREBASE_PROJECT_ID")
+    return firebase_auth.Client(app)
 
 
 def auth_disabled() -> bool:
-    """Explicit local-dev escape hatch.
-
-    Deliberately an opt-*out*: a missing or misspelled variable leaves auth on. The inverse
-    - treating "unconfigured" as "allow" - is precisely the failure this module exists to
-    fix, and it would fail silently in production.
-    """
+    """Explicit local-dev escape hatch; missing or misspelled values leave auth enabled."""
     return os.environ.get("GTM_AUTH_DISABLED", "").strip().lower() in {"1", "true", "yes"}
 
 
 def verify_request(request: Request) -> dict | None:
-    """Reject anything without a valid, unexpired Supabase access token.
-
-    Registered as an app-wide dependency, so it sees every route including ones that do not
-    exist yet.
-    """
+    """Reject requests without a valid Firebase ID token."""
     if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
         return None
 
@@ -97,46 +71,35 @@ def verify_request(request: Request) -> dict | None:
     header = request.headers.get("Authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
-        # WWW-Authenticate is what tells a client this is "log in", not "you cannot".
         raise HTTPException(401, "missing bearer token", headers={"WWW-Authenticate": "Bearer"})
 
+    auth_client = _firebase_auth()
     try:
-        signing_key = jwk_client().get_signing_key_from_jwt(token)
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=_ALGORITHMS,
-            audience="authenticated",
-            issuer=f"{_project_url()}/auth/v1",
-        )
-        # A verified token must carry a subject: `current_user_id` returns None to mean "no
-        # scoping" (local operator / tests), so an authenticated request that produced None
-        # would silently see every tenant's data. Reject rather than fall through to that.
-        if not payload.get("sub"):
-            log.info("rejected token on %s: no sub claim", request.url.path)
-            raise HTTPException(401, "invalid token", headers={"WWW-Authenticate": "Bearer"})
-        # Stash the verified user so route handlers can scope data to it without re-decoding.
-        request.state.user = payload
-        return payload
-    except jwt.ExpiredSignatureError:
+        payload = auth_client.verify_id_token(token)
+    except firebase_auth.ExpiredIdTokenError:
         raise HTTPException(401, "token expired", headers={"WWW-Authenticate": "Bearer"})
-    except jwt.PyJWTError as exc:
+    except firebase_auth.InvalidIdTokenError as exc:
         log.info("rejected token on %s: %s", request.url.path, exc)
-        # Include the error class so the operator can diagnose JWKS/issuer/audience mismatches
-        # from the browser console without needing server logs.
-        raise HTTPException(401, f"invalid token ({type(exc).__name__})", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(401, "invalid token", headers={"WWW-Authenticate": "Bearer"})
+    except FirebaseError as exc:
+        log.error("Firebase token verification failed: %s", exc)
+        raise HTTPException(503, "Firebase token verification is unavailable") from exc
+
+    if not payload.get("uid") and not payload.get("sub"):
+        log.info("rejected token on %s: no user id claim", request.url.path)
+        raise HTTPException(401, "invalid token", headers={"WWW-Authenticate": "Bearer"})
+
+    request.state.user = payload
+    return payload
 
 
 def current_user_id(request: Request) -> str | None:
-    """The signed-in user's id (the token's `sub`), or None when auth is disabled or bypassed
-    (local operator, tests). None means 'no scoping' – the caller sees everything, which keeps
-    single-operator and test behaviour exactly as before multi-tenancy."""
+    """Return the verified Firebase UID, or None for an explicitly bypassed request."""
     user = getattr(request.state, "user", None)
-    return user.get("sub") if isinstance(user, dict) else None
+    return (user.get("uid") or user.get("sub")) if isinstance(user, dict) else None
 
 
 def current_user_email(request: Request) -> str | None:
-    """The signed-in user's email (the token's `email` claim), or None. Used to grant specific
-    accounts (e.g. the project owner) an exemption from free-tier quotas."""
+    """Return the verified email claim when present."""
     user = getattr(request.state, "user", None)
     return user.get("email") if isinstance(user, dict) else None

@@ -1,16 +1,18 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
+import { confirmPasswordReset } from "firebase/auth"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { createClient } from "@/lib/supabase/client"
+import { createClient } from "@/lib/firebase/client"
 
 export function ResetPasswordForm() {
   const router = useRouter()
+  const params = useSearchParams()
   const [showPassword, setShowPassword] = React.useState(false)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -28,10 +30,14 @@ export function ResetPasswordForm() {
 
     setPending(true)
     try {
-      const { error } = await createClient().auth.updateUser({ password })
-      if (error) { setError(error.message); return }
+      const code = params.get("oobCode")
+      if (!code) {
+        setError("This password reset link is invalid or has expired. Request a new one.")
+        return
+      }
+      await confirmPasswordReset(createClient(), code, password)
       setDone(true)
-      setTimeout(() => { router.replace("/dashboard"); router.refresh() }, 1500)
+      setTimeout(() => { router.replace("/sign-in"); router.refresh() }, 1500)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update password.")
     } finally {

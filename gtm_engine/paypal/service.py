@@ -267,16 +267,16 @@ def refresh_order(db, client: PayPalClient, cfg: PayPalConfig, checkout_id: str)
     if not order:
         raise ApprovalRequired("checkout not found")
     if order["status"] == "PAID" or not order.get("paypal_order_id"):
-        return checkout_view(order)
+        return _checkout_view(order)
     try:
         remote = client.get_order(order["paypal_order_id"])
     except PayPalError:
-        return checkout_view(order)
+        return _checkout_view(order)
     if not order_matches(
         remote, order_id=order["paypal_order_id"], checkout_id=checkout_id,
         amount_cents=order["amount_cents"], currency=order["currency"],
     ):
-        return checkout_view(order)
+        return _checkout_view(order)
     if remote.get("status") == "COMPLETED":
         return _confirmed_capture(db, client, order, remote)
     if remote.get("status") == "APPROVED":
@@ -285,8 +285,16 @@ def refresh_order(db, client: PayPalClient, cfg: PayPalConfig, checkout_id: str)
             capability=_checkout_capability(cfg, checkout_id),
             paypal_order_id=order["paypal_order_id"],
         )
-        return checkout_view(store.get_order(db, checkout_id) or order)
-    return checkout_view(order)
+        return _checkout_view(store.get_order(db, checkout_id) or order)
+    if remote.get("status") in {"CREATED", "PAYER_ACTION_REQUIRED"} and not order.get("approval_url"):
+        try:
+            href = approval_url(remote)
+        except OrderError:
+            return _checkout_view(order)
+        order = store.finish_order_creation(
+            db, checkout_id, paypal_order_id=order["paypal_order_id"], approval_url=href,
+        ) or order
+    return _checkout_view(order)
 
 
 def score_snapshot(lead) -> tuple[int, dict]:

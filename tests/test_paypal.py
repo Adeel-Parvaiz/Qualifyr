@@ -182,6 +182,30 @@ def test_order_payload_uses_server_amount_and_only_sandbox_approval_links():
         ]})
 
 
+@pytest.mark.parametrize("rel", ["approve", "payer-action"])
+def test_refresh_checkout_recovers_missing_payment_link(monkeypatch, rel):
+    row = {"checkout_id": "cko_1", "paypal_order_id": "ORDER-1", "status": "PENDING",
+           "amount_cents": 20000, "currency": "USD", "approval_url": None,
+           "created_at": "now", "updated_at": "now"}
+    remote = {"id": "ORDER-1", "intent": "CAPTURE", "status": "PAYER_ACTION_REQUIRED",
+              "purchase_units": [{"custom_id": "cko_1", "amount": {"currency_code": "USD", "value": "200.00"}}],
+              "links": [{"rel": rel, "href": "https://www.sandbox.paypal.com/checkoutnow?token=ORDER-1"}]}
+    monkeypatch.setattr(service.store, "get_order", lambda *_: row)
+    monkeypatch.setattr(service.store, "finish_order_creation", lambda *a, **k: row.update(k) or row)
+    from types import SimpleNamespace
+    client = SimpleNamespace(get_order=lambda _: remote)
+    cfg = PayPalConfig("id", "secret", "wh", "sandbox", ("USD",), 100000, "")
+    result = service.refresh_order(object(), client, cfg, "cko_1")
+    assert result["approval_url"].endswith("token=ORDER-1")
+    assert result["status"] == "PENDING"
+
+
+def test_payer_action_still_rejects_untrusted_host():
+    with pytest.raises(orders.OrderError):
+        orders.approval_url({"id": "ORDER-1", "links": [
+            {"rel": "payer-action", "href": "https://evil.example/checkoutnow?token=ORDER-1"}]})
+
+
 def test_order_transport_errors_distinguish_unsent_and_unknown():
     import httpx
 

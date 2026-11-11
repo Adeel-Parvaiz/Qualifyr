@@ -13,6 +13,7 @@ interface Ctx {
   keyCount: number
   configuredKeys: Set<string>
   keysLoading: boolean
+  keysError: boolean
   refreshKeys: () => void
 }
 
@@ -26,11 +27,15 @@ export function CampaignProvider({ children }: { children: React.ReactNode }) {
   const lastFetch = React.useRef(0)
   const [configuredKeys, setConfiguredKeys] = React.useState<Set<string>>(new Set())
   const [keysLoading, setKeysLoading] = React.useState(true)
+  const [keysError, setKeysError] = React.useState(false)
 
   const refreshKeys = React.useCallback(() => {
     api.listApiKeys()
-      .then((r) => setConfiguredKeys(new Set(r.keys.map((k) => k.key_name))))
-      .catch(() => {})
+      .then((r) => {
+        setConfiguredKeys(new Set(r.keys.map((k) => k.key_name)))
+        setKeysError(false)
+      })
+      .catch(() => setKeysError(true))
       .finally(() => setKeysLoading(false))
   }, [])
 
@@ -100,7 +105,7 @@ export function CampaignProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <CampaignContext.Provider value={{ campaigns, campaignId, setCampaignId, refresh, loading, error, keyCount: configuredKeys.size, configuredKeys, keysLoading, refreshKeys }}>
+    <CampaignContext.Provider value={{ campaigns, campaignId, setCampaignId, refresh, loading, error, keyCount: configuredKeys.size, configuredKeys, keysLoading, keysError, refreshKeys }}>
       {children}
     </CampaignContext.Provider>
   )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -11,11 +12,25 @@ from gtm_engine.config.schema import CampaignConfig, DefaultRules, EngineSetting
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# Security-sensitive toggles must be explicit in the actual process environment, not
+# silently inherited from a checked-in or developer-local .env file. Leaving auth off is
+# an allowed local escape hatch, but it must never be set by accident from a file.
+_SKIP_DOTENV_KEYS = {"GTM_AUTH_DISABLED"}
+
 
 def load_dotenv(path: Path | None = None) -> int:
     """Read KEY=VALUE lines from .env into the environment for local runs. Values already
-    set in the real environment win, so CI secrets are never overridden by a stale file."""
+    set in the real environment win, so CI secrets are never overridden by a stale file.
+    Security-sensitive toggles such as GTM_AUTH_DISABLED stay out of .env entirely; they must
+    be set in the process environment by the operator for local testing.
+
+    Pytest must not inherit a developer-local .env because the suite is expected to run in a
+    clean environment and should skip DB-backed tests unless the operator explicitly sets
+    GTM_TEST_DATABASE_URL / GTM_DATABASE_URL in the process environment.
+    """
     path = path or PROJECT_ROOT / ".env"
+    if path == PROJECT_ROOT / ".env" and ("PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules):
+        return 0
     if not path.exists():
         return 0
     loaded = 0
@@ -25,6 +40,8 @@ def load_dotenv(path: Path | None = None) -> int:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip()
+        if key in _SKIP_DOTENV_KEYS:
+            continue
         if value.startswith(('"', "'")):
             # Preserve hashes and spaces inside a quoted value.
             end = value.find(value[0], 1)

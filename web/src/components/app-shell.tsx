@@ -73,7 +73,14 @@ function SidebarContent() {
 function BackendStatus() {
   const [health, setHealth] = React.useState<"up" | "down" | null>(null)
   React.useEffect(() => {
-    api.health().then(() => setHealth("up")).catch(() => setHealth("down"))
+    let active = true
+    const check = () => {
+      api.health().then(() => { if (active) setHealth("up") })
+        .catch(() => { if (active) setHealth("down") })
+    }
+    check()
+    const timer = setInterval(check, 30000)
+    return () => { active = false; clearInterval(timer) }
   }, [])
   return (
     <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
@@ -91,16 +98,16 @@ function BackendStatus() {
 }
 
 function KeySetupBanner() {
-  const { keyCount, keysLoading } = useCampaign()
-  if (keysLoading || keyCount >= 3) return null
+  const { keyCount, keysLoading, keysError } = useCampaign()
+  if (keysLoading || keysError || keyCount >= 3) return null
 
   if (keyCount === 0) {
     return (
       <div className="border-b border-amber-500/30 bg-amber-500/10 px-6 py-2.5">
         <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
           <AlertTriangle className="size-4 shrink-0" />
-          <span className="font-medium">No API keys configured.</span>
-          <span className="text-amber-700/80 dark:text-amber-400/80">Campaigns cannot run discovery without at least one key.</span>
+          <span className="font-medium">Using free discovery fallbacks.</span>
+          <span className="text-amber-700/80 dark:text-amber-400/80">Add optional API keys for additional search and AI features.</span>
           <Link href="/settings" className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 transition-colors">
             <Key className="size-3" /> Add keys
           </Link>

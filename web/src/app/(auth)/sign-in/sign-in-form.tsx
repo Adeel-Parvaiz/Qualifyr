@@ -3,12 +3,13 @@
 import * as React from "react"
 import { useSearchParams } from "next/navigation"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
+import { browserLocalPersistence, setPersistence, sendEmailVerification, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "firebase/auth"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { createClient } from "@/lib/supabase/client"
-import { supabaseConfigured } from "@/lib/supabase/config"
+import { createClient } from "@/lib/firebase/client"
+import { firebaseConfigured } from "@/lib/firebase/config"
 
 export function SignInForm() {
   const params = useSearchParams()
@@ -26,10 +27,10 @@ export function SignInForm() {
     const email = String(form.get("email") ?? "").trim()
     if (!email) { setError("Enter your email address."); setPending(false); return }
     try {
-      const { error } = await createClient().auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+      await sendPasswordResetEmail(createClient(), email, {
+        url: `${window.location.origin}/auth/callback?next=/reset-password`,
+        handleCodeInApp: true,
       })
-      if (error) { setError(error.message); return }
       setResetSent(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach the auth service.")
@@ -45,27 +46,41 @@ export function SignInForm() {
 
     const form = new FormData(event.currentTarget)
     try {
-      const { data, error } = await createClient().auth.signInWithPassword({
-        email: String(form.get("email") ?? ""),
-        password: String(form.get("password") ?? ""),
-      })
-      if (error) {
-        // Supabase already says "Invalid login credentials" without revealing whether the
-        // address exists, which is the behaviour we want; don't rewrite it into something
-        // more specific.
-        setError(error.message)
+      const auth = createClient()
+      await setPersistence(auth, browserLocalPersistence)
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        String(form.get("email") ?? ""),
+        String(form.get("password") ?? ""),
+      )
+      if (!credential.user.emailVerified) {
+        try {
+          await sendEmailVerification(credential.user, {
+            url: `${window.location.origin}/auth/callback`,
+            handleCodeInApp: true,
+          })
+        } finally {
+          await signOut(auth)
+        }
+        setError("Verify your email using the link we just sent, then sign in again.")
         return
       }
-      if (!data.session) {
-        setError("Sign-in completed without an active session. Please try again.")
-        return
+      const idToken = await credential.user.getIdToken()
+      const sessionResponse = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      })
+      if (!sessionResponse.ok) {
+        await signOut(auth)
+        throw new Error("Could not establish a secure session. Please try again.")
       }
       const requestedNext = params.get("next") || "/dashboard"
       const destination = new URL(requestedNext, window.location.origin)
       const next = destination.origin === window.location.origin
         ? `${destination.pathname}${destination.search}${destination.hash}`
         : "/dashboard"
-      // A full navigation sends the newly written Supabase cookies through the server proxy.
+      // A full navigation sends the new HttpOnly session cookie through the server proxy.
       window.location.replace(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach the sign-in service.")
@@ -74,12 +89,11 @@ export function SignInForm() {
     }
   }
 
-  if (!supabaseConfigured) {
+  if (!firebaseConfigured) {
     return (
       <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        Sign-in is not configured: <code>NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
-        <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)</code> are missing from this build. On Vercel
-        they are inlined at build time, so add them and redeploy.
+        Sign-in is not configured: the <code>NEXT_PUBLIC_FIREBASE_*</code> settings are missing
+        from this build. On Vercel they are inlined at build time, so add them and redeploy.
       </p>
     )
   }

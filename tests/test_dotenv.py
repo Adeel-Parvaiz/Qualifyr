@@ -34,3 +34,12 @@ def test_dotenv_preserves_existing_environment(tmp_path, monkeypatch):
     env.write_text(f"{key}=file-value\n", encoding="utf-8")
     assert load_dotenv(env) == 0
     assert os.environ[key] == "runtime-value"
+
+
+def test_dotenv_ignores_auth_disable_switch(tmp_path, monkeypatch):
+    key = "GTM_AUTH_DISABLED"
+    monkeypatch.delenv(key, raising=False)
+    env = tmp_path / ".env"
+    env.write_text(f"{key}=1\n", encoding="utf-8")
+    assert load_dotenv(env) == 0
+    assert key not in os.environ

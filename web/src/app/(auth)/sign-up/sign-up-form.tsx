@@ -1,16 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
+import { createUserWithEmailAndPassword, sendEmailVerification, signOut } from "firebase/auth"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { api, PENDING_MONETIZATION_KEY, PENDING_MONETIZATION_COMMENT_KEY } from "@/lib/api"
-import { createClient } from "@/lib/supabase/client"
-import { supabaseConfigured } from "@/lib/supabase/config"
+import { PENDING_MONETIZATION_KEY, PENDING_MONETIZATION_COMMENT_KEY } from "@/lib/api"
+import { createClient } from "@/lib/firebase/client"
+import { firebaseConfigured } from "@/lib/firebase/config"
 
 const USE_OPTIONS = [
   { value: "own_keys", label: "I'll bring my own API keys (free tier)" },
@@ -19,7 +19,6 @@ const USE_OPTIONS = [
 ]
 
 export function SignUpForm() {
-  const router = useRouter()
   const [showPassword, setShowPassword] = React.useState(false)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -41,15 +40,6 @@ export function SignUpForm() {
     const password = String(form.get("password") ?? "")
 
     try {
-      const { data, error } = await createClient().auth.signUp({
-        email,
-        password,
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-      })
-      if (error) {
-        setError(error.message)
-        return
-      }
       // Stash the vote (and the optional free-text answer, so an admin can read what people
       // wrote) so both are saved even when the account needs e-mail confirmation first (no
       // session/token yet). They are flushed to the backend on the first authenticated load.
@@ -58,23 +48,17 @@ export function SignUpForm() {
         localStorage.setItem(PENDING_MONETIZATION_KEY, usage)
         if (trimmedComment) localStorage.setItem(PENDING_MONETIZATION_COMMENT_KEY, trimmedComment)
       } catch { /* ignore */ }
-      // A session on the response means email confirmation is off and this account is
-      // already active - otherwise Supabase is waiting on a confirmation link, and there
-      // is nothing to sign in to yet.
-      if (data.session) {
-        try {
-          await api.setPreference("monetization_preference", usage)
-          localStorage.removeItem(PENDING_MONETIZATION_KEY)
-          if (trimmedComment) {
-            await api.setPreference("monetization_comment", trimmedComment)
-            localStorage.removeItem(PENDING_MONETIZATION_COMMENT_KEY)
-          }
-        } catch { /* flushed later on first authenticated load */ }
-        router.replace("/dashboard")
-        router.refresh()
-      } else {
-        setSent(true)
+      const auth = createClient()
+      const credential = await createUserWithEmailAndPassword(auth, email, password)
+      try {
+        await sendEmailVerification(credential.user, {
+          url: `${window.location.origin}/auth/callback`,
+          handleCodeInApp: true,
+        })
+      } finally {
+        await signOut(auth)
       }
+      setSent(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach the sign-up service.")
     } finally {
@@ -82,12 +66,11 @@ export function SignUpForm() {
     }
   }
 
-  if (!supabaseConfigured) {
+  if (!firebaseConfigured) {
     return (
       <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        Sign-up is not configured: <code>NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
-        <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)</code> are missing from this build. On Vercel
-        they are inlined at build time, so add them and redeploy.
+        Sign-up is not configured: the <code>NEXT_PUBLIC_FIREBASE_*</code> settings are missing
+        from this build. On Vercel they are inlined at build time, so add them and redeploy.
       </p>
     )
   }

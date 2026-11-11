@@ -522,6 +522,24 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
+    def fail_stale_run_progress(self, campaign_id: str, updated_at: str) -> None:
+        """Fail only the observed attempt; never overwrite a runner's newer heartbeat."""
+        now = utcnow().isoformat()
+        row = self._execute(
+            "UPDATE run_progress SET stage = 'failed', message = %s, updated_at = %s "
+            "WHERE campaign_id = %s AND updated_at = %s "
+            "AND stage NOT IN ('idle', 'completed', 'failed') RETURNING campaign_id",
+            ("No progress received for 15 minutes. Check the GitHub Actions job, then retry.",
+             now, campaign_id, updated_at),
+        ).fetchone()
+        if row:
+            self._execute(
+                "UPDATE credit_reservations SET state = 'refunded', released_at = %s "
+                "WHERE campaign_id = %s AND state = 'active' AND created_at <= %s",
+                (now, campaign_id, updated_at),
+            )
+        self._commit()
+
     # -- companies ----------------------------------------------------------
 
     def upsert_company(self, company_key: str, campaign_id: str, name: str, *,
@@ -1001,7 +1019,7 @@ class Database:
     # -- usage counts (daily per-user) ----------------------------------------
 
     def check_and_increment_usage(self, user_id: str, resource: str, limit: int,
-                                   monthly_limit: int | None = None) -> bool:
+                                   monthly_limit: int | None = None, *, usage_date: str | None = None) -> bool:
         """Atomically bump today's (and this month's) usage and report whether this request is
         within both `limit` (daily) and `monthly_limit` (optional - None means no monthly cap).
 
@@ -1012,7 +1030,7 @@ class Database:
         resets daily_count to 1, a new month resets monthly_count to 1, in the same statement."""
         if limit <= 0:
             return False
-        today = utcnow().strftime("%Y-%m-%d")
+        today = usage_date or utcnow().strftime("%Y-%m-%d")
         month = today[:7]
         # No monthly cap: make the monthly branch always pass by comparing against a limit
         # the counter can never reach.
@@ -1037,6 +1055,19 @@ class Database:
         ).fetchone()
         self._commit()
         return row is not None
+
+    def refund_usage(self, user_id: str, resource: str, usage_date: str) -> None:
+        """Return one failed attempt without decrementing a newer day's/month's usage."""
+        self._execute(
+            "UPDATE usage_counts SET "
+            "daily_count = CASE WHEN last_reset_date = %s THEN GREATEST(0, daily_count - 1) "
+            "                   ELSE daily_count END, "
+            "monthly_count = CASE WHEN last_reset_month = %s THEN GREATEST(0, monthly_count - 1) "
+            "                     ELSE monthly_count END "
+            "WHERE user_id = %s AND resource = %s",
+            (usage_date, usage_date[:7], user_id, resource),
+        )
+        self._commit()
 
     def get_usage(self, user_id: str) -> list[dict]:
         today = utcnow().strftime("%Y-%m-%d")

@@ -103,14 +103,16 @@ def _monthly_limit(resource: str, db: Database | None = None, user_id: str | Non
     return default
 
 
-def check_usage(db: Database, user_id: str | None, resource: str) -> bool:
+def check_usage(db: Database, user_id: str | None, resource: str, *, usage_date: str | None = None) -> bool:
     """Check if the user is under the daily (and monthly, where capped) limit and increment.
     Returns True if allowed."""
     if not user_id:
         return True
+    period = {"usage_date": usage_date} if usage_date is not None else {}
     return db.check_and_increment_usage(
         user_id, resource, _limit(resource, db, user_id),
         monthly_limit=_monthly_limit(resource, db, user_id),
+        **period,
     )
 
 

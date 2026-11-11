@@ -1,78 +1,78 @@
-import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
-import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, supabaseConfigured } from "@/lib/supabase/config"
+import { createAdminAuth } from "@/lib/firebase/admin"
+import { firebaseConfigured } from "@/lib/firebase/config"
+import { SESSION_COOKIE_NAME } from "@/lib/firebase/session"
 
-/** Routes that require a session. Everything else - the landing page, /sign-in, static
- *  assets - is public. */
 const PROTECTED = ["/dashboard", "/campaigns", "/leads", "/outreach", "/revenue", "/settings"]
+const AUTH_PAGES = ["/sign-in", "/sign-up", "/reset-password"]
+const INVALID_SESSION_CODES = new Set([
+  "auth/argument-error",
+  "auth/id-token-expired",
+  "auth/invalid-id-token",
+  "auth/session-cookie-expired",
+  "auth/session-cookie-revoked",
+  "auth/invalid-session-cookie",
+  "auth/user-disabled",
+  "auth/user-not-found",
+])
+
+function isAuthVerificationFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false
+  return typeof error.code === "string" && INVALID_SESSION_CODES.has(error.code)
+}
+
+function clearSession(response: NextResponse) {
+  response.cookies.set(SESSION_COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  })
+}
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
-  const isProtected = PROTECTED.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  const isProtected = PROTECTED.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+  const isAuthPage = AUTH_PAGES.includes(pathname)
 
-  const isAuthPage = pathname === "/sign-in" || pathname === "/sign-up" || pathname === "/reset-password"
+  if (!firebaseConfigured || (!isProtected && !isAuthPage)) return NextResponse.next()
 
-  // Nothing to check, and nothing we could check with. Note this only affects *navigation*:
-  // the API refuses unauthenticated requests regardless, so an unconfigured deploy shows an
-  // empty dashboard rather than leaking anything.
-  if (!supabaseConfigured || (!isProtected && !isAuthPage)) {
-    return NextResponse.next()
-  }
-
-  // Supabase refreshes the session by setting cookies, so the response has to be built
-  // first and handed to the client - otherwise a refreshed token is dropped and the user
-  // is silently signed out when the old one expires.
-  let response = NextResponse.next({ request })
-
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    cookies: {
-      getAll: () => request.cookies.getAll(),
-      setAll: (cookies, headers) => {
-        cookies.forEach(({ name, value }) => request.cookies.set(name, value))
-        response = NextResponse.next({ request })
-        cookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
-        Object.entries(headers).forEach(([key, value]) => response.headers.set(key, value))
-      },
-    },
-  })
-
-  // getUser(), not getSession(): getSession trusts whatever is in the cookie, while getUser
-  // verifies it with Supabase. A forged cookie must not get past the redirect.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  const redirect = (url: URL) => {
-    const result = NextResponse.redirect(url)
-    response.cookies.getAll().forEach((cookie) => result.cookies.set(cookie))
-    for (const header of ["cache-control", "expires", "pragma"]) {
-      const value = response.headers.get(header)
-      if (value) result.headers.set(header, value)
+  let validSession = false
+  let invalidSession = false
+  const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value
+  if (sessionCookie) {
+    try {
+      await createAdminAuth().verifySessionCookie(sessionCookie)
+      validSession = true
+    } catch (error) {
+      if (!isAuthVerificationFailure(error)) throw error
+      invalidSession = true
     }
-    return result
   }
 
-  if (isProtected && !user) {
+  if (isProtected && !validSession) {
     const url = request.nextUrl.clone()
     url.pathname = "/sign-in"
-    // Come back to where they were aiming once they are in.
     url.searchParams.set("next", pathname)
-    return redirect(url)
+    const response = NextResponse.redirect(url)
+    if (invalidSession) clearSession(response)
+    return response
   }
 
-  if (isAuthPage && user && pathname !== "/reset-password") {
+  if (isAuthPage && validSession && pathname !== "/reset-password") {
     const url = request.nextUrl.clone()
     url.pathname = "/dashboard"
     url.search = ""
-    return redirect(url)
+    return NextResponse.redirect(url)
   }
 
+  const response = NextResponse.next()
+  if (invalidSession) clearSession(response)
   return response
 }
 
 export const config = {
-  // Skip static assets and image optimisation: running an auth check on every .svg is
-  // latency for nothing.
   matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
 }

@@ -1,7 +1,8 @@
 // Thin client for the FastAPI backend. Base URL comes from NEXT_PUBLIC_API_URL.
 
-import { createClient } from "@/lib/supabase/client"
-import { supabaseConfigured } from "@/lib/supabase/config"
+import { signOut } from "firebase/auth"
+import { createClient, signedInUser } from "@/lib/firebase/client"
+import { firebaseConfigured } from "@/lib/firebase/config"
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api"
 
@@ -227,38 +228,48 @@ export interface SendReport {
   mailboxes?: Record<string, MailboxState>
 }
 
-/** The current Supabase access token, or null when signed out.
- *
- * Read per request rather than captured once: the SDK rotates the token in the background,
- * and a stale copy would start 401ing an hour into a session. getSession() reads local
- * storage and refreshes only when needed, so this is not a network call in the common case.
- */
-async function accessToken(): Promise<string | null> {
-  if (typeof window === "undefined" || !supabaseConfigured) return null
-  const { data, error } = await createClient().auth.getSession()
-  if (error) throw error
-  return data.session?.access_token ?? null
+/** Read the current Firebase ID token per request so expired tokens are refreshed. */
+async function accessToken(forceRefresh = false): Promise<string | null> {
+  if (typeof window === "undefined" || !firebaseConfigured) return null
+  const user = await signedInUser()
+  return user ? user.getIdToken(forceRefresh) : null
+}
+
+function isAuthenticationFailure(response: Response): boolean {
+  return response.status === 401 &&
+    response.headers.get("WWW-Authenticate")?.toLowerCase().startsWith("bearer") === true
 }
 
 /** On a 401, sign out the stale local session and redirect to sign-in at most once per
- * page-load. Shared by request() and the raw-fetch downloadExport so both honour the same
- * one-shot guard; without it, a download hitting a persistent 401 (JWKS mismatch, clock skew)
- * redirects on every call and loops. */
-async function handleUnauthorized(): Promise<void> {
-  if (typeof window === "undefined") return
-  // Sign out the stale local session so the middleware stops thinking we're
-  // authenticated (which would bounce /sign-in back to /dashboard → loop).
-  try { const sb = (await import("@/lib/supabase/client")).createClient(); await sb.auth.signOut() } catch { /* best effort */ }
-  const key = "__qualifyr_401_redirect"
-  if (!sessionStorage.getItem(key)) {
-    sessionStorage.setItem(key, "1")
-    window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname)}`)
-  }
+ * page-load. Only the API authentication middleware sends WWW-Authenticate: Bearer; route-level
+ * 401s (for example a missing user ID in local auth-disabled mode) must not sign out a valid
+ * Firebase session. */
+let unauthorizedRecovery: Promise<void> | undefined
+
+function handleUnauthorized(): Promise<void> {
+  return unauthorizedRecovery ??= recoverUnauthorized()
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await accessToken()
-  const res = await fetch(`${API_URL}${path}`, {
+async function recoverUnauthorized(): Promise<void> {
+  if (typeof window === "undefined") return
+  const [localSignOut, cookieSignOut] = await Promise.allSettled([
+    signOut(createClient()),
+    fetch("/api/auth/session", { method: "DELETE" }),
+  ])
+  if (localSignOut.status === "rejected") {
+    console.error("Could not clear the expired Firebase client session", localSignOut.reason)
+  }
+  if (cookieSignOut.status === "rejected") {
+    console.error("Could not clear the expired Firebase session cookie", cookieSignOut.reason)
+  } else if (!cookieSignOut.value.ok) {
+    console.error("Could not clear the expired Firebase session cookie", cookieSignOut.value.status)
+  }
+  window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`)
+}
+
+async function request<T>(path: string, init?: RequestInit, authenticated = true): Promise<T> {
+  let token = authenticated ? await accessToken() : null
+  const send = () => fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -267,8 +278,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
     cache: "no-store",
   })
+  let res = await send()
+  if (token && isAuthenticationFailure(res)) {
+    token = await accessToken(true)
+    if (token) res = await send()
+  }
   if (!res.ok) {
-    if (res.status === 401 && token) await handleUnauthorized()
+    // A fresh token rejected by the server can indicate a backend configuration
+    // problem. Preserve the signed-in user and show that error instead of looping.
+    if (authenticated && !token && firebaseConfigured && isAuthenticationFailure(res)) await handleUnauthorized()
     let detail = res.statusText
     try { detail = (await res.json()).detail ?? detail } catch { /* not json */ }
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail))
@@ -279,7 +297,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; version: string; smtp_configured: boolean; require_approval: boolean; auth_mode: string; warmup: { enabled: boolean; start: number; step: number; max: number }; limits?: { max_campaigns: number; max_leads_per_campaign: number } }>("/health"),
+  health: () => request<{ status: string; version: string; smtp_configured: boolean; require_approval: boolean; auth_mode: string; warmup: { enabled: boolean; start: number; step: number; max: number }; limits?: { max_campaigns: number; max_leads_per_campaign: number } }>("/health", undefined, false),
   campaigns: () => request<Campaign[]>("/campaigns"),
   createCampaign: (body: CampaignCreate) =>
     request<{ campaign_id: string; name: string }>("/campaigns", { method: "POST", body: JSON.stringify(body) }),
@@ -311,16 +329,21 @@ export const api = {
    * the bearer token, so the API answered "missing bearer token"; this fetches with the token,
    * then saves the returned blob. Honours the same filters shown in the Leads table. */
   downloadExport: async (id: string, opts: { min_score?: number; company_type?: string } = {}) => {
-    const token = await accessToken()
+    let token = await accessToken()
     const p = new URLSearchParams()
     if (opts.min_score !== undefined) p.set("min_score", String(opts.min_score))
     if (opts.company_type) p.set("company_type", opts.company_type)
-    const res = await fetch(`${API_URL}/campaigns/${id}/export?${p}`, {
+    const send = () => fetch(`${API_URL}/campaigns/${id}/export?${p}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       cache: "no-store",
     })
+    let res = await send()
+    if (token && isAuthenticationFailure(res)) {
+      token = await accessToken(true)
+      if (token) res = await send()
+    }
     if (!res.ok) {
-      if (res.status === 401 && token) await handleUnauthorized()
+      if (!token && firebaseConfigured && isAuthenticationFailure(res)) await handleUnauthorized()
       let detail = res.statusText
       try { detail = (await res.json()).detail ?? detail } catch { /* not json */ }
       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail))

@@ -1,4 +1,4 @@
-"""FastAPI backend for the web UI. Every route except /health requires a valid Supabase
+"""FastAPI backend for the web UI. Every route except /health requires a valid Firebase
 bearer token (see api/auth.py). Multi-tenant: campaigns are owned by the account that
 created them, and campaign- and lead-scoped routes are guarded by require_campaign_access /
 require_lead_access so one account never sees another's data (file-based example campaigns
@@ -126,6 +126,14 @@ def dispatch_workflow(workflow_file: str, inputs: dict[str, str]) -> None:
         timeout=15.0,
     )
     if resp.status_code >= 300:
+        if resp.status_code == 404:
+            raise HTTPException(
+                502,
+                f"Could not start discovery: GitHub could not access {repo}/{workflow_file}. "
+                "Check GTM_GITHUB_REPO, ensure the workflow is pushed to the repository's default branch, "
+                "and give GTM_GITHUB_TOKEN access to that repository with Actions: Read and write. "
+                "No job was started.",
+            )
         raise HTTPException(502, f"GitHub workflow dispatch failed ({resp.status_code}): {resp.text}")
 
 
@@ -145,6 +153,14 @@ def _run_is_active(live: dict | None) -> bool:
     except (KeyError, TypeError, ValueError):
         return True  # no usable timestamp: assume live, since double-dispatching is worse
     return age < _STALE_AFTER
+
+
+def _current_run_progress(db: Database, campaign_id: str) -> dict | None:
+    live = db.get_run_progress(campaign_id)
+    if live and live.get("stage") not in (None, "idle", "completed", "failed") and not _run_is_active(live):
+        db.fail_stale_run_progress(campaign_id, live["updated_at"])
+        live = db.get_run_progress(campaign_id)
+    return live
 
 
 def _workflow_campaign_path(campaign_id: str) -> str:
@@ -255,15 +271,15 @@ def health() -> dict:
     # Raw exception strings leak the DB host/port and internal stack traces to anyone on the
     # internet; the detail is logged server-side instead, where operators can read it.
     o = load_outreach_settings()
-    auth_ok = bool(os.environ.get("GTM_SUPABASE_URL", "").strip())
-    jwks_ok = False
-    if auth_ok:
+    firebase_project_set = bool(os.environ.get("FIREBASE_PROJECT_ID", "").strip())
+    firebase_admin_ready = False
+    if firebase_project_set:
         try:
-            from gtm_engine.api.auth import jwk_client
-            jwk_client()
-            jwks_ok = True
+            from gtm_engine.api.auth import _firebase_auth
+            _firebase_auth()
+            firebase_admin_ready = True
         except Exception as exc:
-            log.warning("health: jwks unreachable: %s", exc)
+            log.warning("health: Firebase Admin unavailable: %s", exc)
     db_ok = False
     dsn = os.environ.get("GTM_DATABASE_URL", "")
     if dsn:
@@ -279,7 +295,8 @@ def health() -> dict:
                        "step": o.warmup_step_per_day, "max": o.daily_limit},
             "limits": {"max_campaigns": FREE_MAX_CAMPAIGNS,
                        "max_leads_per_campaign": FREE_MAX_LEADS_PER_CAMPAIGN},
-            "auth": {"supabase_url_set": auth_ok, "jwks_reachable": jwks_ok,
+            "auth": {"firebase_project_id_set": firebase_project_set,
+                     "firebase_admin_ready": firebase_admin_ready,
                      "auth_disabled": auth_disabled()},
             "encryption_available": encryption_available(),
             "database": {"connected": db_ok, "dsn_set": bool(dsn.strip())}}
@@ -351,7 +368,7 @@ def _campaign_summary(db: Database, c: CampaignConfig, file: str | None) -> dict
         "qualified": counts["qualified"],
         "outreach_ready": counts["outreach_ready"],
         "last_run": last_run,
-        "live": db.get_run_progress(c.campaign_id),
+        "live": _current_run_progress(db, c.campaign_id),
     }
 
 
@@ -558,15 +575,10 @@ def run_campaign(campaign_id: str, req: RunRequest,
     Progress lands in the run_progress table, written by the Actions runner."""
     campaign = _campaign(campaign_id)
     db = _db()
-    live = db.get_run_progress(campaign_id)
+    live = _current_run_progress(db, campaign_id)
     if _run_is_active(live):
         db.close()
         raise HTTPException(409, "a run is already in progress for this campaign")
-    # Per-user daily cap on run dispatches (atomic). Local operators (user_id None) and master
-    # accounts are unlimited; everyone else is backstopped against spamming workflow dispatches.
-    if user_id is not None and not _is_unlimited(email) and not check_usage(db, user_id, "runs"):
-        db.close()
-        raise HTTPException(429, "Run limit reached for today or this month – try again later.")
     db.close()
     # P1 (2026-10-10): leads_per_run (req.max_companies) is a dropdown choice on the
     # frontend, sourced from GET /settings/limits.allowed_leads_per_run — so an explicit
@@ -617,7 +629,19 @@ def run_campaign(campaign_id: str, req: RunRequest,
     # id, which the runner resolves from Postgres. Either way the runner's `gtm run` accepts it.
     campaign_input = _workflow_campaign_path(campaign_id) if campaign_id in _campaign_files() else campaign_id
     min_outreach_ready = req.min_outreach_ready if req.min_outreach_ready is not None else campaign.min_outreach_ready
+    run_usage_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    run_counted = False
     try:
+        # Validate first, then atomically claim an allowance before dispatching. Failed
+        # dispatches return it; successful dispatches still count even if the job fails later.
+        if user_id is not None and not _is_unlimited(email):
+            usage_db = _db()
+            try:
+                run_counted = check_usage(usage_db, user_id, "runs", usage_date=run_usage_date)
+            finally:
+                usage_db.close()
+            if not run_counted:
+                raise HTTPException(429, "Run limit reached for today or this month – try again later.")
         dispatch_workflow(
             "gather-leads.yml",
             {
@@ -628,6 +652,12 @@ def run_campaign(campaign_id: str, req: RunRequest,
             },
         )
     except Exception:
+        if run_counted:
+            usage_db = _db()
+            try:
+                usage_db.refund_usage(user_id, "runs", run_usage_date)
+            finally:
+                usage_db.close()
         # Nothing was dispatched, so nothing will ever release the hold we just took. Give the
         # credits straight back rather than making the user wait out the TTL.
         if reserved:
@@ -645,7 +675,7 @@ def run_campaign(campaign_id: str, req: RunRequest,
 @app.get("/campaigns/{campaign_id}/progress", dependencies=[Depends(require_campaign_access)])
 def progress(campaign_id: str) -> dict:
     db = _db()
-    live = db.get_run_progress(campaign_id)
+    live = _current_run_progress(db, campaign_id)
     db.close()
     return live or {"stage": "idle"}
 
@@ -1301,9 +1331,15 @@ def _test_key(key_name: str, key: str) -> tuple[bool, str]:
                            timeout=10)
             return r.status_code == 200, f"Places: {r.status_code}"
         if key_name == "gemini":
-            r = httpx.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}",
-                           json={"contents": [{"parts": [{"text": "hi"}]}]}, timeout=10)
-            return r.status_code == 200, f"Gemini: {r.status_code}"
+            from gtm_engine.llm.client import GEMINI_MODELS
+            for model in GEMINI_MODELS:
+                r = httpx.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    headers={"x-goog-api-key": key},
+                    json={"contents": [{"parts": [{"text": "hi"}]}]}, timeout=10)
+                if r.status_code not in (404, 429, 503):
+                    break
+            return r.status_code == 200, f"Gemini ({model}): {r.status_code}"
     except httpx.HTTPError as exc:
         return False, str(exc)
     return False, f"unknown key type: {key_name}"
