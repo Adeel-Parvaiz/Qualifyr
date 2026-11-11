@@ -1,13 +1,13 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
-import { SUPABASE_ANON_KEY, SUPABASE_URL, supabaseConfigured } from "@/lib/supabase/config"
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, supabaseConfigured } from "@/lib/supabase/config"
 
 /** Routes that require a session. Everything else - the landing page, /sign-in, static
  *  assets - is public. */
-const PROTECTED = ["/dashboard", "/campaigns", "/leads", "/outreach", "/settings"]
+const PROTECTED = ["/dashboard", "/campaigns", "/leads", "/outreach", "/revenue", "/settings"]
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const isProtected = PROTECTED.some((p) => pathname === p || pathname.startsWith(`${p}/`))
 
@@ -25,13 +25,14 @@ export async function middleware(request: NextRequest) {
   // is silently signed out when the old one expires.
   let response = NextResponse.next({ request })
 
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     cookies: {
       getAll: () => request.cookies.getAll(),
-      setAll: (cookies) => {
+      setAll: (cookies, headers) => {
         cookies.forEach(({ name, value }) => request.cookies.set(name, value))
         response = NextResponse.next({ request })
         cookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
+        Object.entries(headers).forEach(([key, value]) => response.headers.set(key, value))
       },
     },
   })
@@ -42,19 +43,29 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
+  const redirect = (url: URL) => {
+    const result = NextResponse.redirect(url)
+    response.cookies.getAll().forEach((cookie) => result.cookies.set(cookie))
+    for (const header of ["cache-control", "expires", "pragma"]) {
+      const value = response.headers.get(header)
+      if (value) result.headers.set(header, value)
+    }
+    return result
+  }
+
   if (isProtected && !user) {
     const url = request.nextUrl.clone()
     url.pathname = "/sign-in"
     // Come back to where they were aiming once they are in.
     url.searchParams.set("next", pathname)
-    return NextResponse.redirect(url)
+    return redirect(url)
   }
 
   if (isAuthPage && user && pathname !== "/reset-password") {
     const url = request.nextUrl.clone()
     url.pathname = "/dashboard"
     url.search = ""
-    return NextResponse.redirect(url)
+    return redirect(url)
   }
 
   return response

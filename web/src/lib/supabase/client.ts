@@ -2,7 +2,7 @@
 
 import { createBrowserClient } from "@supabase/ssr"
 
-import { SUPABASE_ANON_KEY, SUPABASE_URL, supabaseConfigured } from "./config"
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, supabaseConfigured } from "./config"
 
 /** Browser-side Supabase client.
  *
@@ -12,10 +12,10 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL, supabaseConfigured } from "./config"
 export function createClient() {
   if (!supabaseConfigured) {
     throw new Error(
-      "NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are not set. On Vercel " +
+      "NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY are not set. On Vercel " +
         "these are inlined at build time, so add them and redeploy - setting them alone " +
         "will not change an existing build."
     )
   }
-  return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  return createBrowserClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
 }

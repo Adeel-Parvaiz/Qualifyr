@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { createServerClient } from "@supabase/ssr"
-import { SUPABASE_ANON_KEY, SUPABASE_URL, supabaseConfigured } from "@/lib/supabase/config"
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, supabaseConfigured } from "@/lib/supabase/config"
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl
@@ -19,18 +19,25 @@ export async function GET(request: NextRequest) {
   }
 
   const response = NextResponse.redirect(`${origin}${next}`)
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     cookies: {
       getAll: () => request.cookies.getAll(),
-      setAll: (cookies) => {
+      setAll: (cookies, headers) => {
         cookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
+        Object.entries(headers).forEach(([key, value]) => response.headers.set(key, value))
       },
     },
   })
 
   const { error } = await supabase.auth.exchangeCodeForSession(code)
   if (error) {
-    return NextResponse.redirect(`${origin}/sign-in`)
+    const failure = NextResponse.redirect(`${origin}/sign-in`)
+    response.cookies.getAll().forEach((cookie) => failure.cookies.set(cookie))
+    for (const header of ["cache-control", "expires", "pragma"]) {
+      const value = response.headers.get(header)
+      if (value) failure.headers.set(header, value)
+    }
+    return failure
   }
 
   return response

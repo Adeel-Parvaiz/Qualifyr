@@ -4,6 +4,9 @@ const backendUrl = (process.env.API_PROXY_TARGET ?? "http://127.0.0.1:8000").rep
 const tunnelHost = process.env.NGROK_DOMAIN?.trim();
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    root: process.cwd(),
+  },
   allowedDevOrigins: tunnelHost ? [tunnelHost] : [],
   async rewrites() {
     // Vercel routes /api to the Python function via vercel.json.

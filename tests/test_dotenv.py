@@ -1,3 +1,5 @@
+import os
+
 from gtm_engine.config.loader import load_dotenv
 
 
@@ -7,12 +9,10 @@ def test_dotenv_comments_do_not_become_credentials(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text(f"{key}=sandbox-client-id  # sandbox app\n", encoding="utf-8")
     assert load_dotenv(env) == 1
-    import os
     assert os.environ[key] == "sandbox-client-id"
 
 
 def test_dotenv_preserves_hashes_in_passwords(tmp_path, monkeypatch):
-    import os
     keys = ["TEST_DOTENV_UNQUOTED", "TEST_DOTENV_SINGLE", "TEST_DOTENV_DOUBLE"]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -28,7 +28,6 @@ def test_dotenv_preserves_hashes_in_passwords(tmp_path, monkeypatch):
 
 
 def test_dotenv_preserves_existing_environment(tmp_path, monkeypatch):
-    import os
     key = "TEST_DOTENV_EXISTING"
     monkeypatch.setenv(key, "runtime-value")
     env = tmp_path / ".env"

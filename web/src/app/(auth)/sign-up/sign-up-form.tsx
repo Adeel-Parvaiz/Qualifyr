@@ -86,7 +86,7 @@ export function SignUpForm() {
     return (
       <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
         Sign-up is not configured: <code>NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
-        <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> are missing from this build. On Vercel
+        <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)</code> are missing from this build. On Vercel
         they are inlined at build time, so add them and redeploy.
       </p>
     )
