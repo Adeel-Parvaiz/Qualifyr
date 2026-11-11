@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -11,7 +11,6 @@ import { createClient } from "@/lib/supabase/client"
 import { supabaseConfigured } from "@/lib/supabase/config"
 
 export function SignInForm() {
-  const router = useRouter()
   const params = useSearchParams()
   const [showPassword, setShowPassword] = React.useState(false)
   const [pending, setPending] = React.useState(false)
@@ -46,7 +45,7 @@ export function SignInForm() {
 
     const form = new FormData(event.currentTarget)
     try {
-      const { error } = await createClient().auth.signInWithPassword({
+      const { data, error } = await createClient().auth.signInWithPassword({
         email: String(form.get("email") ?? ""),
         password: String(form.get("password") ?? ""),
       })
@@ -57,9 +56,17 @@ export function SignInForm() {
         setError(error.message)
         return
       }
-      // refresh() so the middleware re-runs with the new session cookie before we land.
-      router.replace(params.get("next") || "/dashboard")
-      router.refresh()
+      if (!data.session) {
+        setError("Sign-in completed without an active session. Please try again.")
+        return
+      }
+      const requestedNext = params.get("next") || "/dashboard"
+      const destination = new URL(requestedNext, window.location.origin)
+      const next = destination.origin === window.location.origin
+        ? `${destination.pathname}${destination.search}${destination.hash}`
+        : "/dashboard"
+      // A full navigation sends the newly written Supabase cookies through the server proxy.
+      window.location.replace(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach the sign-in service.")
     } finally {
@@ -71,7 +78,7 @@ export function SignInForm() {
     return (
       <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
         Sign-in is not configured: <code>NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
-        <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> are missing from this build. On Vercel
+        <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)</code> are missing from this build. On Vercel
         they are inlined at build time, so add them and redeploy.
       </p>
     )

@@ -235,12 +235,9 @@ export interface SendReport {
  */
 async function accessToken(): Promise<string | null> {
   if (typeof window === "undefined" || !supabaseConfigured) return null
-  try {
-    const { data } = await createClient().auth.getSession()
-    return data.session?.access_token ?? null
-  } catch {
-    return null
-  }
+  const { data, error } = await createClient().auth.getSession()
+  if (error) throw error
+  return data.session?.access_token ?? null
 }
 
 /** On a 401, sign out the stale local session and redirect to sign-in at most once per
@@ -271,7 +268,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   })
   if (!res.ok) {
-    if (res.status === 401) await handleUnauthorized()
+    if (res.status === 401 && token) await handleUnauthorized()
     let detail = res.statusText
     try { detail = (await res.json()).detail ?? detail } catch { /* not json */ }
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail))
@@ -323,7 +320,7 @@ export const api = {
       cache: "no-store",
     })
     if (!res.ok) {
-      if (res.status === 401) await handleUnauthorized()
+      if (res.status === 401 && token) await handleUnauthorized()
       let detail = res.statusText
       try { detail = (await res.json()).detail ?? detail } catch { /* not json */ }
       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail))
