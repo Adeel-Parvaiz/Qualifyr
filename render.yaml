@@ -1,0 +1,65 @@
+services:
+  - type: web
+    name: qualifyr-api
+    runtime: python
+    plan: free
+    buildCommand: pip install ".[api,sheets]"
+    startCommand: python -m uvicorn gtm_engine.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: GTM_DATABASE_URL
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GTM_ENCRYPTION_KEY
+        sync: false
+      - key: GTM_GITHUB_REPO
+        value: Adeel-Parvaiz/Qualifyr
+      - key: GTM_GITHUB_REF
+        value: main
+      - key: GTM_GITHUB_TOKEN
+        sync: false
+      - key: GTM_PAYPAL_CLIENT_ID
+        sync: false
+      - key: GTM_PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: GTM_PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: GTM_PAYPAL_CHECKOUT_RETURN_URL
+        sync: false
+      - key: GTM_PAYPAL_CHECKOUT_CANCEL_URL
+        sync: false
+
+  - type: web
+    name: qualifyr-web
+    runtime: node
+    plan: free
+    rootDir: web
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start -- --hostname 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NEXT_PUBLIC_API_URL
+        value: /api
+      - key: API_PROXY_TARGET
+        sync: false
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_API_KEY
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_APP_ID
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
