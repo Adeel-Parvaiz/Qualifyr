@@ -537,6 +537,8 @@ function RunPanel({ campaign, onFinished }: { campaign: Campaign; onFinished: ()
   const [max, setMax] = React.useState(String(campaign.max_companies))
   const [progress, setProgress] = React.useState<RunProgress | null>(campaign.live)
   const [starting, setStarting] = React.useState(false)
+  const [rechecking, setRechecking] = React.useState(false)
+  const [qualificationNote, setQualificationNote] = React.useState<string | null>(null)
   const dispatchPending = React.useRef(false)
   const [error, setError] = React.useState<string | null>(null)
   const running = progress && !["idle", "completed", "failed"].includes(progress.stage)
@@ -629,14 +631,25 @@ function RunPanel({ campaign, onFinished }: { campaign: Campaign; onFinished: ()
             <option key={n} value={n}>{n} leads</option>
           ))}
         </select>
-        <Button size="sm" onClick={start} disabled={starting || !!running || !limitsReady || !selectedMax} aria-busy={starting || !!running}>
+        <Button size="sm" onClick={start} disabled={rechecking || starting || !!running || !limitsReady || !selectedMax} aria-busy={starting || !!running}>
           {starting || running ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />} {starting || running ? "Running…" : "Run"}
+        </Button>
+        <Button size="sm" variant="outline" disabled={rechecking || starting || !!running} onClick={async () => {
+          setRechecking(true); setError(null); setQualificationNote(null)
+          try {
+            const result = await api.requalifyCampaign(campaign.campaign_id)
+            setQualificationNote(`Rechecked ${result.checked} leads: ${result.email_ready} eligible for email outreach. Open Outreach and click Refresh.`)
+            onFinished()
+          } catch (e) { setError((e as Error).message) } finally { setRechecking(false) }
+        }}>
+          {rechecking ? <Loader2 className="size-3.5 animate-spin" /> : null} {rechecking ? "Rechecking…" : "Recheck qualification"}
         </Button>
         <Button size="sm" variant="outline" onClick={() => api.downloadExport(campaign.campaign_id, { min_score: campaign.min_score })}>
           <Download className="size-3.5" /> CSV
         </Button>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
+      {qualificationNote && <p className="text-xs text-muted-foreground">{qualificationNote}</p>}
       {progress && progress.stage !== "idle" && (
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 text-xs">

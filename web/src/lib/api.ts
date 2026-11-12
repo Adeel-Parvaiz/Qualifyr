@@ -308,6 +308,7 @@ export const api = {
   runCampaign: (id: string, max_companies?: number) =>
     request<Progress>(`/campaigns/${id}/run`, { method: "POST", body: JSON.stringify({ max_companies }) }),
   progress: (id: string) => request<Progress>(`/campaigns/${id}/progress`),
+  requalifyCampaign: (id: string) => request<{ checked: number; outreach_ready: number; email_ready: number }>(`/campaigns/${id}/requalify`, { method: "POST" }),
   stats: (id: string) => request<Stats>(`/campaigns/${id}/stats`),
   leads: (id: string, q: { min_score?: number; company_type?: string; outreach_ready?: boolean; search?: string; order?: "recent" | "score"; limit?: number; offset?: number } = {}) => {
     const p = new URLSearchParams()

@@ -672,6 +672,35 @@ def run_campaign(campaign_id: str, req: RunRequest,
     return ticket
 
 
+@app.post("/campaigns/{campaign_id}/requalify", dependencies=[Depends(require_campaign_access)])
+def requalify_campaign(campaign_id: str) -> dict:
+    from gtm_engine.scoring.requalification import recheck_qualification
+
+    campaign = _campaign(campaign_id)
+    db = _db()
+    try:
+        if _run_is_active(_current_run_progress(db, campaign_id)):
+            raise HTTPException(409, "Wait for the active discovery run to finish before rechecking qualification.")
+        owner = db.campaign_owner(campaign_id)
+        checked = ready = email_ready = 0
+        for lead in db.list_leads(campaign_id):
+            # Existing sequences and opt-outs are never restarted by a recheck.
+            if lead.sequence_status not in (SequenceStatus.NOT_QUEUED, SequenceStatus.NEEDS_CONTACT):
+                continue
+            updated = recheck_qualification(lead, campaign)
+            if db.is_suppressed(updated.domain, updated.contact_email, owner_id=owner):
+                updated.outreach_ready = False
+                updated.outreach_skip_reason = "suppressed"
+            db.update_lead(updated)
+            checked += 1
+            ready += int(updated.outreach_ready)
+            email_ready += int(updated.outreach_ready and bool(updated.contact_email) and
+                               updated.email_status.value in {"mx_valid", "generic", "deliverable"})
+        return {"checked": checked, "outreach_ready": ready, "email_ready": email_ready}
+    finally:
+        db.close()
+
+
 @app.get("/campaigns/{campaign_id}/progress", dependencies=[Depends(require_campaign_access)])
 def progress(campaign_id: str) -> dict:
     db = _db()
