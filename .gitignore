@@ -13,7 +13,7 @@ Cred*.pdf
 # PII can't happen even if someone re-adds the step.
 data/*
 !data/**/.gitkeep
-leads/
+/leads/
 stress_*.log
 stress_*.stdout
 
@@ -54,4 +54,4 @@ data/outbox/
 # Local snapshot taken before clean_test_debris.py --apply. Data, not source.
 debris-backup.json
 _encryption_key.txt
-leads/
+/leads/
