@@ -73,6 +73,13 @@ osm_categories:
   - shop=mall
   - shop=supermarket
 
-min_score: 70
+min_score: 25
+min_outreach_ready: 2
+
+routing:
+  high_priority: 55
+  qualified: 25
+  review: 20
+
 max_companies: 120
 max_pages_per_site: 6
