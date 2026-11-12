@@ -145,6 +145,12 @@ export default function RevenuePage() {
   // This loader only updates state after awaiting the API response.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   React.useEffect(() => { void load() }, [load])
+  React.useEffect(() => {
+    const timer = setInterval(() => { void load() }, 15000)
+    const refresh = () => { void load() }
+    window.addEventListener("focus", refresh)
+    return () => { clearInterval(timer); window.removeEventListener("focus", refresh) }
+  }, [load])
 
   const act = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label); setError(null)
@@ -154,7 +160,7 @@ export default function RevenuePage() {
   const paidMoney = summary
     ? Object.entries(summary.paid_cents_by_currency).map(([c, v]) => formatMoney(v, c)).join(" + ") || formatMoney(0, "USD")
     : "—"
-  const open = summary ? (summary.by_status["SENT"] ?? 0) + (summary.by_status["DRAFT"] ?? 0) : 0
+  const open = summary ? ["SENT", "DRAFT", "CREATING", "PENDING", "APPROVED", "CAPTURING", "CAPTURE_PENDING"].reduce((n, status) => n + (summary.by_status[status] ?? 0), 0) : 0
   const bandData = (summary?.score_bands ?? []).map((b) => ({ band: b.band, rate: b.rate === null ? 0 : Math.round(b.rate * 100), n: b.n }))
   const hasBands = bandData.some((b) => b.n > 0)
 
@@ -163,7 +169,7 @@ export default function RevenuePage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Revenue</h1>
-          <p className="text-muted-foreground">From approved lead to paid invoice, and back into the score. Every figure here comes from PayPal events.</p>
+          <p className="text-muted-foreground">Track invoices and one-time checkouts. Revenue includes only payments confirmed with PayPal.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {status && (
@@ -195,12 +201,31 @@ export default function RevenuePage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32" />)}</div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Kpi title="Revenue collected" value={paidMoney} hint="Sum of invoices PayPal reported as paid." icon={Wallet} highlight />
-          <Kpi title="Invoices sent" value={String(summary?.total_invoices ?? 0)} hint="Created from human-approved proposals." icon={Receipt} />
+          <Kpi title="Revenue collected" value={paidMoney} hint="Paid invoices and one-time checkouts confirmed with PayPal." icon={Wallet} highlight />
+          <Kpi title="Invoices & checkouts" value={String(summary?.total_payments ?? summary?.total_invoices ?? 0)} hint="Created from human-approved proposals." icon={Receipt} />
           <Kpi title="Awaiting payment" value={String(open)} hint="Sent, not yet paid or cancelled." icon={RefreshCw} />
-          <Kpi title="Paid rate" value={`${((summary?.paid_rate ?? 0) * 100).toFixed(0)}%`} hint={`${summary?.paid_invoices ?? 0} paid of ${summary?.total_invoices ?? 0}.`} icon={TrendingUp} />
+          <Kpi title="Paid rate" value={`${((summary?.paid_rate ?? 0) * 100).toFixed(0)}%`} hint={`${summary?.paid_payments ?? summary?.paid_invoices ?? 0} paid of ${summary?.total_payments ?? summary?.total_invoices ?? 0}.`} icon={TrendingUp} />
         </div>
       )}
+
+      <Card>
+        <CardHeader><CardTitle>One-time checkouts</CardTitle></CardHeader>
+        <CardContent>
+          {!summary?.checkouts?.length ? <p className="text-sm text-muted-foreground">No checkouts for this campaign yet.</p> : (
+            <Table>
+              <TableHeader><TableRow><TableHead>Checkout</TableHead><TableHead>Status</TableHead><TableHead>Amount</TableHead><TableHead>Paid</TableHead></TableRow></TableHeader>
+              <TableBody>{summary.checkouts.map((checkout) => (
+                <TableRow key={checkout.checkout_id}>
+                  <TableCell className="font-mono text-xs">{checkout.checkout_id}</TableCell>
+                  <TableCell><Badge variant={checkout.status === "PAID" ? "default" : "outline"}>{checkout.status.replaceAll("_", " ")}</Badge></TableCell>
+                  <TableCell>{formatMoney(checkout.amount_cents, checkout.currency)}</TableCell>
+                  <TableCell>{checkout.paid_at ? new Date(checkout.paid_at).toLocaleString() : "Awaiting confirmation"}</TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {summary && summary.synthetic_count > 0 && (
         <Card className="border-amber-500/30 bg-amber-500/5">

@@ -483,6 +483,17 @@ def revenue_summary(db, owner_id: str | None, campaign_id: str | None = None) ->
     rows = db._execute(
         f"SELECT campaign_id, currency, status, is_synthetic, COUNT(*) AS n, COALESCE(SUM(amount_cents),0) AS cents "
         f"FROM invoices {where} GROUP BY campaign_id, currency, status, is_synthetic", tuple(params)).fetchall()
+    invoice_total = sum(int(r["n"]) for r in rows)
+    invoice_paid = sum(int(r["n"]) for r in rows if r["status"] == "PAID")
+    invoice_rows = [{**dict(r), "source": "invoice"} for r in rows]
+    order_rows = db._execute(
+        f"SELECT campaign_id, currency, status, FALSE AS is_synthetic, COUNT(*) AS n, "
+        f"COALESCE(SUM(amount_cents),0) AS cents FROM paypal_orders {where} "
+        "GROUP BY campaign_id, currency, status", tuple(params)).fetchall()
+    rows = invoice_rows + [{**dict(r), "source": "checkout"} for r in order_rows]
+    checkouts = db._execute(
+        f"SELECT checkout_id, campaign_id, status, amount_cents, currency, created_at, paid_at "
+        f"FROM paypal_orders {where} ORDER BY created_at DESC LIMIT 100", tuple(params)).fetchall()
     by_status: dict[str, int] = {}
     paid_cents: dict[str, int] = {}
     per_campaign: dict[str, dict] = {}
@@ -491,8 +502,8 @@ def revenue_summary(db, owner_id: str | None, campaign_id: str | None = None) ->
         by_status[r["status"]] = by_status.get(r["status"], 0) + int(r["n"])
         if r["is_synthetic"]:
             synthetic += int(r["n"])
-        c = per_campaign.setdefault(r["campaign_id"], {"campaign_id": r["campaign_id"], "invoices": 0, "paid": 0, "paid_cents": 0})
-        c["invoices"] += int(r["n"])
+        c = per_campaign.setdefault(r["campaign_id"], {"campaign_id": r["campaign_id"], "invoices": 0, "checkouts": 0, "paid": 0, "paid_cents": 0})
+        c["invoices" if r["source"] == "invoice" else "checkouts"] += int(r["n"])
         if r["status"] == "PAID":
             c["paid"] += int(r["n"])
             c["paid_cents"] += int(r["cents"])
@@ -500,7 +511,11 @@ def revenue_summary(db, owner_id: str | None, campaign_id: str | None = None) ->
     total = sum(by_status.values())
     paid = by_status.get("PAID", 0)
     return {
-        "total_invoices": total, "paid_invoices": paid,
+        "total_invoices": invoice_total, "paid_invoices": invoice_paid,
+        "total_checkouts": sum(int(r["n"]) for r in order_rows),
+        "paid_checkouts": sum(int(r["n"]) for r in order_rows if r["status"] == "PAID"),
+        "total_payments": total, "paid_payments": paid,
+        "checkouts": [dict(r) for r in checkouts],
         "paid_rate": round(paid / total, 4) if total else 0.0,
         "paid_cents_by_currency": paid_cents, "by_status": by_status,
         "per_campaign": list(per_campaign.values()), "synthetic_count": synthetic,

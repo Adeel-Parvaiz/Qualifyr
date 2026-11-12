@@ -489,6 +489,8 @@ export interface Invoice {
   is_synthetic: number; sent_at: string | null; paid_at: string | null; created_at: string
 }
 export interface RevenueSummary {
+  total_payments: number; paid_payments: number; total_checkouts: number; paid_checkouts: number
+  checkouts: { checkout_id: string; campaign_id: string; status: string; amount_cents: number; currency: string; created_at: string; paid_at: string | null }[]
   total_invoices: number; paid_invoices: number; paid_rate: number
   paid_cents_by_currency: Record<string, number>; by_status: Record<string, number>
   per_campaign: { campaign_id: string; invoices: number; paid: number; paid_cents: number }[]
